@@ -1,0 +1,1 @@
+"""NutriMate Django backend package."""
