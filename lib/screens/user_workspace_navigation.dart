@@ -81,6 +81,12 @@ class _WaterLogEntry {
     : id = id ?? DateTime.now().microsecondsSinceEpoch.toString(),
       recordedAt = recordedAt ?? DateTime.now();
 
+  factory _WaterLogEntry.fromJson(Map<String, dynamic> json) => _WaterLogEntry(
+    id: '${json['id']}',
+    amount: json['amount_ml'] as int,
+    recordedAt: DateTime.parse(json['recorded_at'] as String),
+  );
+
   final String id;
   final int amount;
   final DateTime recordedAt;

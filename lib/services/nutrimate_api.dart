@@ -104,8 +104,115 @@ class NutriMateApi {
   Future<LocalAccount> currentUser() async =>
       LocalAccount.fromJson(await _request('GET', 'auth/me/'));
 
+  Future<Map<String, dynamic>> exportMyData() =>
+      _request('GET', 'auth/export/');
+
+  Future<LocalAccount> updateProfile({
+    required String name,
+    required Map<String, dynamic> preferences,
+  }) async => LocalAccount.fromJson(
+    await _request(
+      'PATCH',
+      'auth/me/',
+      body: {'name': name.trim(), 'preferences': preferences},
+    ),
+  );
+
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    await _request(
+      'POST',
+      'auth/change-password/',
+      body: {'current_password': currentPassword, 'new_password': newPassword},
+    );
+  }
+
+  Future<void> requestEmailVerification() async {
+    await _request('POST', 'auth/email/verification/request/', body: {});
+  }
+
+  Future<LocalAccount> confirmEmailVerification(String code) async =>
+      LocalAccount.fromJson(
+        await _request(
+          'POST',
+          'auth/email/verification/confirm/',
+          body: {'code': code},
+        ),
+      );
+
+  Future<void> requestPasswordReset(String email) async {
+    await _request(
+      'POST',
+      'auth/password/reset/request/',
+      body: {'email': email.trim()},
+      authenticated: false,
+    );
+  }
+
+  Future<void> confirmPasswordReset({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) async {
+    await _request(
+      'POST',
+      'auth/password/reset/confirm/',
+      body: {'email': email.trim(), 'code': code, 'new_password': newPassword},
+      authenticated: false,
+    );
+  }
+
+  Future<void> deleteAccount(String password) async {
+    await _request('DELETE', 'auth/account/', body: {'password': password});
+  }
+
   Future<Map<String, dynamic>> adminDashboard() =>
       _request('GET', 'admin/dashboard/');
+
+  Future<Map<String, dynamic>> adminReport({
+    required DateTime start,
+    required DateTime end,
+  }) {
+    final query = Uri(
+      queryParameters: {
+        'start': _dateQueryValue(start),
+        'end': _dateQueryValue(end),
+      },
+    ).query;
+    return _request('GET', 'admin/reports/?$query');
+  }
+
+  String _dateQueryValue(DateTime value) =>
+      '${value.year.toString().padLeft(4, '0')}-'
+      '${value.month.toString().padLeft(2, '0')}-'
+      '${value.day.toString().padLeft(2, '0')}';
+
+  Future<List<Map<String, dynamic>>> articles() => _requestList('content/');
+
+  Future<List<Map<String, dynamic>>> recommendations() =>
+      _requestList('recommendations/');
+
+  Future<List<Map<String, dynamic>>> announcements() =>
+      _requestList('announcements/');
+
+  Future<List<Map<String, dynamic>>> adminAuditEvents() =>
+      _requestList('admin/audit/');
+
+  Future<Map<String, dynamic>> saveAdminResource(
+    String resource,
+    Map<String, dynamic> values, {
+    int? id,
+  }) => _request(
+    id == null ? 'POST' : 'PATCH',
+    id == null ? '$resource/' : '$resource/$id/',
+    body: values,
+  );
+
+  Future<void> deleteAdminResource(String resource, int id) async {
+    await _request('DELETE', '$resource/$id/');
+  }
 
   Future<List<LocalAccount>> adminUsers({String search = ''}) async {
     final query = search.trim().isEmpty
@@ -154,10 +261,14 @@ class NutriMateApi {
   Future<List<Map<String, dynamic>>> foods({
     String search = '',
     int? categoryId,
+    String? barcode,
   }) async {
     final parameters = <String, String>{};
     if (search.trim().isNotEmpty) parameters['search'] = search.trim();
     if (categoryId != null) parameters['category'] = '$categoryId';
+    if (barcode != null && barcode.trim().isNotEmpty) {
+      parameters['barcode'] = barcode.trim();
+    }
     final suffix = parameters.isEmpty
         ? ''
         : '?${Uri(queryParameters: parameters).query}';
@@ -216,6 +327,47 @@ class NutriMateApi {
       body: {'amount_ml': amountMl},
     );
     return result['amount_ml'] as int;
+  }
+
+  Future<List<Map<String, dynamic>>> waterEntries() =>
+      _requestList('water/entries/');
+
+  Future<Map<String, dynamic>> createWaterEntry(int amountMl) =>
+      _request('POST', 'water/entries/', body: {'amount_ml': amountMl});
+
+  Future<Map<String, dynamic>> updateWaterEntry(
+    int id, {
+    required int amountMl,
+  }) => _request('PATCH', 'water/entries/$id/', body: {'amount_ml': amountMl});
+
+  Future<void> deleteWaterEntry(int id) async {
+    await _request('DELETE', 'water/entries/$id/');
+  }
+
+  Future<List<Map<String, dynamic>>> measurements() =>
+      _requestList('measurements/');
+
+  Future<Map<String, dynamic>> createMeasurement({
+    required double weightKg,
+    double? heightCm,
+  }) => _request(
+    'POST',
+    'measurements/',
+    body: {'weight_kg': weightKg, 'height_cm': ?heightCm},
+  );
+
+  Future<Map<String, dynamic>> updateMeasurement(
+    int id, {
+    required double weightKg,
+    double? heightCm,
+  }) => _request(
+    'PATCH',
+    'measurements/$id/',
+    body: {'weight_kg': weightKg, 'height_cm': heightCm},
+  );
+
+  Future<void> deleteMeasurement(int id) async {
+    await _request('DELETE', 'measurements/$id/');
   }
 
   Future<Map<String, dynamic>> _request(

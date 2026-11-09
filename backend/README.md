@@ -57,13 +57,22 @@ time to override the Flutter default.
 - `POST /auth/register/` (public registration always creates a User)
 - `POST /admin/users/create/` (Admin creates a regular User account)
 - `POST /auth/token/` and `POST /auth/token/refresh/` (JWT)
-- `GET /auth/me/`
+- `GET|PATCH /auth/me/` and `GET /auth/export/`
+- `POST /auth/change-password/`, email-verification, and password-reset endpoints
+- `DELETE /auth/account/` (requires the current password)
 - `GET /admin/dashboard/`
+- `GET /admin/reports/` (date-filtered aggregate counts)
+- `GET /admin/audit/` (admin-only audit events)
 - `GET /admin/users/`, `PATCH /admin/users/{id}/` (`is_active`)
 - `GET|POST /categories/`, `GET|PATCH|DELETE /categories/{id}/`
 - `GET|POST /foods/`, `GET|PATCH|DELETE /foods/{id}/`
 - `GET|POST /meals/`, `GET|PATCH|DELETE /meals/{id}/`
 - `GET|PUT /water/today/`
+- `GET|POST /water/entries/`, `GET|PATCH|DELETE /water/entries/{id}/`
+- `GET|POST /measurements/`, `GET|PATCH|DELETE /measurements/{id}/`
+- `GET|POST /content/`, `GET|PATCH|DELETE /content/{id}/`
+- `GET|POST /recommendations/`, `GET|PATCH|DELETE /recommendations/{id}/`
+- `GET|POST /announcements/`, `GET|PATCH|DELETE /announcements/{id}/`
 
 Food and category writes, dashboard stats, and user administration require a
 server-authorized admin account. Create the shared administrator once with
@@ -75,6 +84,25 @@ manually logged meals remain supported for compatibility.
 
 Protected API endpoints always require a valid JWT, including in development;
 there is no implicit development user or authentication bypass.
+
+Email verification and password reset use one-time codes that expire after
+15 minutes. In development without SMTP configuration, codes are printed to the
+backend console. To send real email, configure these environment variables
+before starting Django:
+
+```powershell
+$env:DJANGO_EMAIL_HOST = "smtp.example.com"
+$env:DJANGO_EMAIL_PORT = "587"
+$env:DJANGO_EMAIL_USER = "your-smtp-user"
+$env:DJANGO_EMAIL_PASSWORD = "your-smtp-password"
+$env:DJANGO_EMAIL_USE_TLS = "true"
+$env:DJANGO_DEFAULT_FROM_EMAIL = "noreply@example.com"
+```
+
+Never commit SMTP credentials. Announcements are shown in the authenticated
+in-app feed when their publish time is reached; push delivery is not configured.
+User export and admin reports contain only the requesting user's data or
+aggregate counts, respectively.
 
 `DEBUG` defaults to true for local development. Before deployment, configure a
 unique `DJANGO_SECRET_KEY`, set `DJANGO_DEBUG=false`, and set

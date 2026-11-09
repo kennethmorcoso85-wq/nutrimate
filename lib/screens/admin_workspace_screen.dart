@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 
 import '../models/local_account.dart';
 import '../services/nutrimate_api.dart';
 import '../utils/app_colors.dart';
+
+part 'admin_workspace_resources.dart';
 
 class AdminWorkspaceScreen extends StatefulWidget {
   const AdminWorkspaceScreen({
@@ -34,31 +38,20 @@ class _AdminWorkspaceScreenState extends State<AdminWorkspaceScreen> {
       _UserManagementTab(api: widget.api),
       _AdminFoodTab(api: widget.api),
       _AdminReportsTab(api: widget.api),
-      _AdminSettingsTab(onLogout: widget.onLogout),
-      const _AdminFeatureTab(
-        title: 'Nutrition content',
-        subtitle: 'Manage articles and nutrition guides',
-        icon: Icons.menu_book_outlined,
-        requirements: 'Article storage, image uploads, review permissions, and a publishing API are not configured.',
+      _AdminSettingsTab(
+        onLogout: widget.onLogout,
+        onNavigate: (index) => setState(() => _tab = index),
       ),
-      const _AdminFeatureTab(
-        title: 'Recommendation rules',
-        subtitle: 'Review educational recommendation rules',
-        icon: Icons.rule_outlined,
-        requirements: 'A rules engine, version history, test data, and server-side publishing are not configured.',
+      _AdminResourceTab(api: widget.api, resource: _AdminResource.articles),
+      _AdminResourceTab(
+        api: widget.api,
+        resource: _AdminResource.recommendations,
       ),
-      const _AdminFeatureTab(
-        title: 'Notifications',
-        subtitle: 'Manage announcements and delivery templates',
-        icon: Icons.notifications_outlined,
-        requirements: 'A notification service, user targeting, scheduling, and delivery history are not configured.',
+      _AdminResourceTab(
+        api: widget.api,
+        resource: _AdminResource.announcements,
       ),
-      const _AdminFeatureTab(
-        title: 'Audit logs',
-        subtitle: 'Review administrative and security events',
-        icon: Icons.history_outlined,
-        requirements: 'Administrative events are not recorded. Audit logs require a protected backend store.',
-      ),
+      _AdminAuditTab(api: widget.api),
       _AdminMoreTab(onNavigate: (index) => setState(() => _tab = index)),
     ];
     return Scaffold(
@@ -347,7 +340,8 @@ class _AdminOverviewState extends State<_AdminOverview> {
       if (snapshot.hasError) {
         return _AdminLoadError(
           message: snapshot.error.toString(),
-          onRetry: () => setState(() => _dashboard = widget.api.adminDashboard()),
+          onRetry: () =>
+              setState(() => _dashboard = widget.api.adminDashboard()),
         );
       }
       if (!snapshot.hasData) {
@@ -355,13 +349,48 @@ class _AdminOverviewState extends State<_AdminOverview> {
       }
       final stats = snapshot.data!;
       final metrics = [
-        _AdminMetricData('Registered accounts', '${stats['registered_accounts']}', Icons.groups_outlined, AppColors.blue),
-        _AdminMetricData('Active accounts', '${stats['active_accounts']}', Icons.verified_user_outlined, AppColors.teal),
-        _AdminMetricData('Meal records', '${stats['meal_records']}', Icons.restaurant_outlined, const Color(0xFF8A68BE)),
-        _AdminMetricData('Food categories', '${stats['food_categories']}', Icons.restaurant_menu_outlined, const Color(0xFFE6A13A)),
-        _AdminMetricData('Published foods', '${stats['published_food_records']}', Icons.public_outlined, const Color(0xFF42916D)),
-        _AdminMetricData('Incomplete foods', '${stats['incomplete_food_records']}', Icons.warning_amber_outlined, const Color(0xFFB7791F)),
-        _AdminMetricData('New today', '${stats['new_registrations_today']}', Icons.person_add_alt_1_outlined, const Color(0xFF8A68BE)),
+        _AdminMetricData(
+          'Registered accounts',
+          '${stats['registered_accounts']}',
+          Icons.groups_outlined,
+          AppColors.blue,
+        ),
+        _AdminMetricData(
+          'Active accounts',
+          '${stats['active_accounts']}',
+          Icons.verified_user_outlined,
+          AppColors.teal,
+        ),
+        _AdminMetricData(
+          'Meal records',
+          '${stats['meal_records']}',
+          Icons.restaurant_outlined,
+          const Color(0xFF8A68BE),
+        ),
+        _AdminMetricData(
+          'Food categories',
+          '${stats['food_categories']}',
+          Icons.restaurant_menu_outlined,
+          const Color(0xFFE6A13A),
+        ),
+        _AdminMetricData(
+          'Published foods',
+          '${stats['published_food_records']}',
+          Icons.public_outlined,
+          const Color(0xFF42916D),
+        ),
+        _AdminMetricData(
+          'Incomplete foods',
+          '${stats['incomplete_food_records']}',
+          Icons.warning_amber_outlined,
+          const Color(0xFFB7791F),
+        ),
+        _AdminMetricData(
+          'New today',
+          '${stats['new_registrations_today']}',
+          Icons.person_add_alt_1_outlined,
+          const Color(0xFF8A68BE),
+        ),
       ];
       final administration = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -392,14 +421,14 @@ class _AdminOverviewState extends State<_AdminOverview> {
           _AdminAction(
             icon: Icons.menu_book_outlined,
             title: 'Nutrition content',
-            subtitle: 'Article publishing is not implemented yet',
+            subtitle: 'Publish articles shown in the Learn section',
             onTap: () => widget.onNavigate(5),
           ),
           const SizedBox(height: 8),
           _AdminAction(
             icon: Icons.notifications_outlined,
-            title: 'Notifications & audit logs',
-            subtitle: 'Delivery and event logging are not implemented',
+            title: 'Announcements & audit logs',
+            subtitle: 'Manage app announcements and review admin activity',
             onTap: () => widget.onNavigate(7),
           ),
         ],
@@ -411,7 +440,7 @@ class _AdminOverviewState extends State<_AdminOverview> {
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: const Color(0xFFE1EAF3)),
         ),
-        child: const Column(
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _AdminSectionTitle('System status'),
@@ -433,8 +462,8 @@ class _AdminOverviewState extends State<_AdminOverview> {
             _AdminStatusRow(
               icon: Icons.history_outlined,
               title: 'Audit activity',
-              value: 'Not implemented',
-              color: Color(0xFF78869A),
+              value: '${stats['audit_events']} events recorded',
+              color: AppColors.teal,
             ),
           ],
         ),
@@ -485,7 +514,10 @@ class _AdminOverviewState extends State<_AdminOverview> {
                           const SizedBox(height: 4),
                           const Text(
                             'Workspace administration overview',
-                            style: TextStyle(color: Color(0xFF78869A), fontSize: 12),
+                            style: TextStyle(
+                              color: Color(0xFF78869A),
+                              fontSize: 12,
+                            ),
                           ),
                         ],
                       ),
@@ -513,7 +545,11 @@ class _AdminOverviewState extends State<_AdminOverview> {
                         flex: 6,
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [metricCards, const SizedBox(height: 22), administration],
+                          children: [
+                            metricCards,
+                            const SizedBox(height: 22),
+                            administration,
+                          ],
                         ),
                       ),
                       const SizedBox(width: 18),
@@ -639,7 +675,10 @@ class _UserManagementTabState extends State<_UserManagementTab> {
                 const Expanded(child: _AdminSectionTitle('Accounts')),
                 Text(
                   '${snapshot.data!.length} accounts',
-                  style: const TextStyle(color: Color(0xFF78869A), fontSize: 10),
+                  style: const TextStyle(
+                    color: Color(0xFF78869A),
+                    fontSize: 10,
+                  ),
                 ),
               ],
             ),
@@ -674,9 +713,8 @@ class _UserManagementTabState extends State<_UserManagementTab> {
     },
   );
 
-  void _reload() => setState(
-    () => _accounts = widget.api.adminUsers(search: _query),
-  );
+  void _reload() =>
+      setState(() => _accounts = widget.api.adminUsers(search: _query));
 
   Future<void> _showCreateAccount() async {
     final result = await showDialog<_NewAccountData>(
@@ -826,10 +864,7 @@ class _NewAccountData {
 }
 
 class _AccountCard extends StatelessWidget {
-  const _AccountCard({
-    required this.account,
-    required this.onToggle,
-  });
+  const _AccountCard({required this.account, required this.onToggle});
   final LocalAccount account;
   final VoidCallback? onToggle;
 
@@ -1040,7 +1075,10 @@ class _AdminFoodTabState extends State<_AdminFoodTab> {
           Row(
             children: [
               const Expanded(child: _AdminSectionTitle('Food records')),
-              Text('${_foods.length} records', style: const TextStyle(fontSize: 10, color: Color(0xFF78869A))),
+              Text(
+                '${_foods.length} records',
+                style: const TextStyle(fontSize: 10, color: Color(0xFF78869A)),
+              ),
             ],
           ),
           const SizedBox(height: 8),
@@ -1134,10 +1172,8 @@ class _AdminFoodTabState extends State<_AdminFoodTab> {
         .toList();
     final value = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (_) => _FoodEditorDialog(
-        categories: activeCategories,
-        food: food,
-      ),
+      builder: (_) =>
+          _FoodEditorDialog(categories: activeCategories, food: food),
     );
     if (value == null) return;
     try {
@@ -1215,6 +1251,9 @@ class _FoodEditorDialogState extends State<_FoodEditorDialog> {
   late final _name = TextEditingController(
     text: widget.food?['name'] as String? ?? '',
   );
+  late final _barcode = TextEditingController(
+    text: widget.food?['barcode'] as String? ?? '',
+  );
   late final _description = TextEditingController(
     text: widget.food?['description'] as String? ?? '',
   );
@@ -1240,13 +1279,13 @@ class _FoodEditorDialogState extends State<_FoodEditorDialog> {
     text: widget.food?['data_source'] as String? ?? '',
   );
   late int _categoryId =
-      widget.food?['category'] as int? ??
-      widget.categories.first['id'] as int;
+      widget.food?['category'] as int? ?? widget.categories.first['id'] as int;
   late String _status = widget.food?['status'] as String? ?? 'draft';
 
   @override
   void dispose() {
     _name.dispose();
+    _barcode.dispose();
     _description.dispose();
     _servingSize.dispose();
     _servingUnit.dispose();
@@ -1270,6 +1309,7 @@ class _FoodEditorDialogState extends State<_FoodEditorDialog> {
             mainAxisSize: MainAxisSize.min,
             children: [
               _field(_name, 'Food name'),
+              _field(_barcode, 'Barcode', required: false),
               _field(_description, 'Description', required: false),
               DropdownButtonFormField<int>(
                 initialValue: _categoryId,
@@ -1287,7 +1327,9 @@ class _FoodEditorDialogState extends State<_FoodEditorDialog> {
               ),
               Row(
                 children: [
-                  Expanded(child: _field(_servingSize, 'Serving size', number: true)),
+                  Expanded(
+                    child: _field(_servingSize, 'Serving size', number: true),
+                  ),
                   const SizedBox(width: 8),
                   Expanded(child: _field(_servingUnit, 'Serving unit')),
                 ],
@@ -1296,7 +1338,9 @@ class _FoodEditorDialogState extends State<_FoodEditorDialog> {
                 children: [
                   Expanded(child: _field(_calories, 'Calories', number: true)),
                   const SizedBox(width: 8),
-                  Expanded(child: _field(_protein, 'Protein (g)', number: true)),
+                  Expanded(
+                    child: _field(_protein, 'Protein (g)', number: true),
+                  ),
                 ],
               ),
               Row(
@@ -1312,7 +1356,10 @@ class _FoodEditorDialogState extends State<_FoodEditorDialog> {
                 decoration: const InputDecoration(labelText: 'Status'),
                 items: const [
                   DropdownMenuItem(value: 'draft', child: Text('Draft')),
-                  DropdownMenuItem(value: 'published', child: Text('Published')),
+                  DropdownMenuItem(
+                    value: 'published',
+                    child: Text('Published'),
+                  ),
                   DropdownMenuItem(value: 'archived', child: Text('Archived')),
                 ],
                 onChanged: (value) =>
@@ -1333,6 +1380,7 @@ class _FoodEditorDialogState extends State<_FoodEditorDialog> {
           if (!_formKey.currentState!.validate()) return;
           Navigator.pop(context, {
             'name': _name.text.trim(),
+            'barcode': _barcode.text.trim(),
             'description': _description.text.trim(),
             'category': _categoryId,
             'serving_size': _servingSize.text.trim(),
@@ -1420,10 +1468,7 @@ class _AdminFoodCard extends StatelessWidget {
                   '${food['calories']} kcal · P ${food['protein']}g · C ${food['carbs']}g · F ${food['fat']}g · ${food['category_name']}',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF8290A2),
-                    fontSize: 9,
-                  ),
+                  style: const TextStyle(color: Color(0xFF8290A2), fontSize: 9),
                 ),
                 const SizedBox(height: 4),
                 _TinyBadge(
@@ -1459,117 +1504,16 @@ class _AdminFoodCard extends StatelessWidget {
   }
 }
 
-class _AdminFeatureTab extends StatelessWidget {
-  const _AdminFeatureTab({
-    required this.title,
-    required this.subtitle,
-    required this.icon,
-    required this.requirements,
-  });
-
-  final String title;
-  final String subtitle;
-  final IconData icon;
-  final String requirements;
-
-  @override
-  Widget build(BuildContext context) => ListView(
-    padding: const EdgeInsets.fromLTRB(18, 12, 18, 26),
-    children: [
-      _AdminPageHeading(title: title, subtitle: subtitle),
-      const SizedBox(height: 15),
-      _AdminFeatureStatusCard(
-        icon: icon,
-        title: 'Not connected yet',
-        description: requirements,
-      ),
-      const SizedBox(height: 14),
-      const _AdminSectionTitle('Before this feature can go live'),
-      const SizedBox(height: 9),
-      const _AdminSettingsRow(
-        icon: Icons.storage_outlined,
-        title: 'Persistent data source',
-        subtitle: 'Configure secure shared storage for this feature',
-      ),
-      const SizedBox(height: 8),
-      const _AdminSettingsRow(
-        icon: Icons.admin_panel_settings_outlined,
-        title: 'Admin authorization',
-        subtitle: 'Enforce role and permissions on the server',
-      ),
-      const SizedBox(height: 8),
-      const _AdminSettingsRow(
-        icon: Icons.sync_outlined,
-        title: 'Application integration',
-        subtitle: 'Connect the User app to published admin data',
-      ),
-    ],
-  );
-}
-
-class _AdminFeatureStatusCard extends StatelessWidget {
-  const _AdminFeatureStatusCard({
-    required this.icon,
-    required this.title,
-    required this.description,
-  });
-
-  final IconData icon;
-  final String title;
-  final String description;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(
-      color: const Color(0xFFFFF6E7),
-      borderRadius: BorderRadius.circular(14),
-      border: Border.all(color: const Color(0xFFF0D9AE)),
-    ),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, color: const Color(0xFFAA7417), size: 21),
-        const SizedBox(width: 11),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  color: AppColors.navy,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 5),
-              Text(
-                description,
-                style: const TextStyle(
-                  color: Color(0xFF805D1A),
-                  fontSize: 10,
-                  height: 1.45,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
 class _AdminMoreTab extends StatelessWidget {
   const _AdminMoreTab({required this.onNavigate});
 
   final ValueChanged<int> onNavigate;
 
   static const _destinations = [
-    (Icons.menu_book_outlined, 'Nutrition content', 'Not connected', 5),
-    (Icons.rule_outlined, 'Recommendation rules', 'Not connected', 6),
-    (Icons.notifications_outlined, 'Notifications', 'Not connected', 7),
-    (Icons.history_outlined, 'Audit logs', 'Not recorded', 8),
+    (Icons.menu_book_outlined, 'Nutrition content', 'Backend connected', 5),
+    (Icons.rule_outlined, 'Recommendation rules', 'Backend connected', 6),
+    (Icons.notifications_outlined, 'Announcements', 'Backend connected', 7),
+    (Icons.history_outlined, 'Audit logs', 'Backend connected', 8),
     (Icons.settings_outlined, 'Settings', 'Local settings', 4),
   ];
 
@@ -1593,9 +1537,6 @@ class _AdminMoreTab extends StatelessWidget {
           ),
         ),
       const SizedBox(height: 8),
-      const _DemoNotice(
-        text: 'This prototype has no backend. Content publishing, recommendations, notifications, and audit history are not active.',
-      ),
     ],
   );
 }
@@ -1663,28 +1604,84 @@ class _AdminReportsTab extends StatefulWidget {
 }
 
 class _AdminReportsTabState extends State<_AdminReportsTab> {
-  late Future<Map<String, dynamic>> _dashboard;
+  late DateTime _start;
+  late DateTime _end;
+  late Future<Map<String, dynamic>> _report;
 
   @override
   void initState() {
     super.initState();
-    _dashboard = widget.api.adminDashboard();
+    _end = DateUtils.dateOnly(DateTime.now());
+    _start = _end.subtract(const Duration(days: 29));
+    _loadReport();
+  }
+
+  void _loadReport() {
+    _report = widget.api.adminReport(start: _start, end: _end);
+  }
+
+  Future<void> _selectRange() async {
+    final range = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now(),
+      initialDateRange: DateTimeRange(start: _start, end: _end),
+    );
+    if (range == null) return;
+    setState(() {
+      _start = DateUtils.dateOnly(range.start);
+      _end = DateUtils.dateOnly(range.end);
+      _loadReport();
+    });
+  }
+
+  Future<void> _exportReport(Map<String, dynamic> report) async {
+    final document = pw.Document();
+    document.addPage(
+      pw.Page(
+        build: (_) => pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            pw.Text(
+              'NutriMate aggregate report',
+              style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold),
+            ),
+            pw.SizedBox(height: 10),
+            pw.Text('Period: ${report['start']} to ${report['end']}'),
+            pw.SizedBox(height: 14),
+            pw.Text('New accounts: ${report['registered_accounts']}'),
+            pw.Text('Meal records: ${report['meal_records']}'),
+            pw.Text('Days with meal records: ${report['meal_days']}'),
+            pw.Text('Active accounts: ${report['active_accounts']}'),
+            pw.Text('Published foods: ${report['published_food_records']}'),
+            pw.SizedBox(height: 12),
+            pw.Text(
+              'This report contains aggregate counts only; individual meal details are private.',
+            ),
+          ],
+        ),
+      ),
+    );
+    await Printing.sharePdf(
+      bytes: await document.save(),
+      filename: 'nutrimate-report-${report['start']}-${report['end']}.pdf',
+    );
   }
 
   @override
   Widget build(BuildContext context) => FutureBuilder<Map<String, dynamic>>(
-    future: _dashboard,
+    future: _report,
     builder: (context, snapshot) {
       if (snapshot.hasError) {
         return _AdminLoadError(
           message: snapshot.error.toString(),
-          onRetry: () => setState(() => _dashboard = widget.api.adminDashboard()),
+          onRetry: () => setState(_loadReport),
         );
       }
       if (!snapshot.hasData) {
         return const Center(child: CircularProgressIndicator());
       }
-      final stats = snapshot.data!;
+      final report = snapshot.data!;
       return ListView(
         padding: const EdgeInsets.fromLTRB(18, 12, 18, 26),
         children: [
@@ -1693,13 +1690,17 @@ class _AdminReportsTabState extends State<_AdminReportsTab> {
               const Expanded(
                 child: _AdminPageHeading(
                   title: 'Reports & analytics',
-                  subtitle: 'Aggregate statistics from the server database',
+                  subtitle: 'Aggregate server data; individual meal details stay private',
                 ),
               ),
               IconButton(
-                tooltip: 'Refresh reports',
-                onPressed: () =>
-                    setState(() => _dashboard = widget.api.adminDashboard()),
+                tooltip: 'Choose report dates',
+                onPressed: _selectRange,
+                icon: const Icon(Icons.date_range_outlined),
+              ),
+              IconButton(
+                tooltip: 'Refresh report',
+                onPressed: () => setState(_loadReport),
                 icon: const Icon(Icons.refresh),
               ),
             ],
@@ -1708,7 +1709,7 @@ class _AdminReportsTabState extends State<_AdminReportsTab> {
           _AdminMetricCard(
             data: _AdminMetricData(
               'Registered accounts',
-              '${stats['registered_accounts']}',
+              '${report['registered_accounts']}',
               Icons.groups_outlined,
               AppColors.blue,
             ),
@@ -1717,7 +1718,7 @@ class _AdminReportsTabState extends State<_AdminReportsTab> {
           _AdminMetricCard(
             data: _AdminMetricData(
               'Meal records',
-              '${stats['meal_records']}',
+              '${report['meal_records']}',
               Icons.restaurant_outlined,
               AppColors.teal,
             ),
@@ -1726,7 +1727,7 @@ class _AdminReportsTabState extends State<_AdminReportsTab> {
           _AdminMetricCard(
             data: _AdminMetricData(
               'Published food records',
-              '${stats['published_food_records']}',
+              '${report['published_food_records']}',
               Icons.public_outlined,
               const Color(0xFF42916D),
             ),
@@ -1738,23 +1739,24 @@ class _AdminReportsTabState extends State<_AdminReportsTab> {
             icon: Icons.groups_outlined,
             title: 'User accounts summary',
             subtitle:
-                '${stats['active_accounts']} active of ${stats['registered_accounts']} registered accounts',
+                '${report['active_accounts']} active accounts · ${report['registered_accounts']} new in period',
           ),
           _ReportLink(
-            icon: Icons.restaurant_outlined,
-            title: 'Food data quality',
+            icon: Icons.insights_outlined,
+            title: 'Meal logging activity',
             subtitle:
-                '${stats['incomplete_food_records']} incomplete records · ${stats['food_categories']} active categories',
+                '${report['meal_days']} days with meal records in selected period',
           ),
           const _ReportLink(
             icon: Icons.privacy_tip_outlined,
             title: 'Privacy scope',
-            subtitle:
-                'Only aggregate meal counts are shown to admins; meal details remain private to each user.',
+            subtitle: 'Only aggregate meal counts are shown to admins; meal details remain private to each user.',
           ),
           const SizedBox(height: 12),
-          const _DemoNotice(
-            text: 'Date-range reports, CSV/PDF exports, and audit reports are not implemented yet.',
+          OutlinedButton.icon(
+            onPressed: () => _exportReport(report),
+            icon: const Icon(Icons.picture_as_pdf_outlined),
+            label: const Text('Export aggregate report'),
           ),
         ],
       );
@@ -1763,8 +1765,10 @@ class _AdminReportsTabState extends State<_AdminReportsTab> {
 }
 
 class _AdminSettingsTab extends StatelessWidget {
-  const _AdminSettingsTab({required this.onLogout});
+  const _AdminSettingsTab({required this.onLogout, required this.onNavigate});
+
   final Future<void> Function() onLogout;
+  final ValueChanged<int> onNavigate;
 
   @override
   Widget build(BuildContext context) => ListView(
@@ -1772,39 +1776,36 @@ class _AdminSettingsTab extends StatelessWidget {
     children: [
       const _AdminPageHeading(
         title: 'Settings',
-        subtitle: 'API-connected application settings',
+        subtitle: 'Manage backend-connected application data',
       ),
       const SizedBox(height: 15),
       const _DemoNotice(
-        text: 'Accounts, meals, water, food categories, and food records are stored by the backend. App preferences remain on this device.',
-      ),
-      const SizedBox(height: 13),
-      const _AdminSettingsRow(
-        icon: Icons.school_outlined,
-        title: 'School information',
-        subtitle: 'Not configured',
+        text: 'User profiles, nutrition preferences, meals, water totals, food catalog entries, articles, announcements, and admin events are stored by the backend.',
       ),
       const SizedBox(height: 8),
-      const _AdminSettingsRow(
+      _AdminSettingsRow(
         icon: Icons.category_outlined,
         title: 'Food categories',
-        subtitle: 'Categories are managed through the Food catalog',
+        subtitle: 'Open the shared food catalog',
+        onTap: () => onNavigate(2),
       ),
       const SizedBox(height: 8),
-      const _AdminSettingsRow(
+      _AdminSettingsRow(
         icon: Icons.notifications_outlined,
-        title: 'Notification templates',
-        subtitle: 'Not implemented · no delivery service configured',
+        title: 'Announcements',
+        subtitle: 'Publish an in-app announcement for users',
+        onTap: () => onNavigate(7),
       ),
       const SizedBox(height: 8),
-      const _AdminSettingsRow(
-        icon: Icons.backup_outlined,
-        title: 'Backup & data',
-        subtitle: 'Local SQLite development database · no cloud backup',
+      _AdminSettingsRow(
+        icon: Icons.manage_accounts_outlined,
+        title: 'User accounts',
+        subtitle: 'Create or manage API accounts',
+        onTap: () => onNavigate(1),
       ),
       const SizedBox(height: 16),
       const _DemoNotice(
-        text: 'Use SQLite for local development only. Before deployment, configure production-grade hosting, secrets, database backups, and secure token storage.',
+        text: 'Announcements appear in the in-app notifications feed. This backend does not send push notifications.',
       ),
       const SizedBox(height: 14),
       OutlinedButton.icon(
@@ -1825,44 +1826,56 @@ class _AdminSettingsRow extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.subtitle,
+    required this.onTap,
   });
   final IconData icon;
   final String title;
   final String subtitle;
+  final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(14),
-    decoration: BoxDecoration(
-      color: Colors.white,
+  Widget build(BuildContext context) => Material(
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(15),
+    child: InkWell(
+      onTap: onTap,
       borderRadius: BorderRadius.circular(15),
-      border: Border.all(color: const Color(0xFFE6EDF1)),
-    ),
-    child: Row(
-      children: [
-        Icon(icon, color: AppColors.teal, size: 20),
-        const SizedBox(width: 11),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  color: AppColors.navy,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              Text(
-                subtitle,
-                style: const TextStyle(color: Color(0xFF8290A2), fontSize: 9),
-              ),
-            ],
-          ),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(color: const Color(0xFFE6EDF1)),
         ),
-        const Icon(Icons.chevron_right, color: Color(0xFF9AA5B5), size: 19),
-      ],
+        child: Row(
+          children: [
+            Icon(icon, color: AppColors.teal, size: 20),
+            const SizedBox(width: 11),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: AppColors.navy,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      color: Color(0xFF8290A2),
+                      fontSize: 9,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: Color(0xFF9AA5B5), size: 19),
+          ],
+        ),
+      ),
     ),
   );
 }

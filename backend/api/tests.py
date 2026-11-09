@@ -1,7 +1,11 @@
+import re
+
+from django.core import mail
+from django.test import override_settings
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
-from .models import FoodCategory
+from .models import AuditEvent, EducationArticle, FoodCategory, MealRecord
 
 
 User = get_user_model()
@@ -123,6 +127,7 @@ class ApiWorkflowTests(APITestCase):
             "/api/v1/foods/",
             {
                 "name": "Banana",
+                "barcode": "1234567890123",
                 "category": self.category.id,
                 "serving_size": "100",
                 "serving_unit": "g",
@@ -136,6 +141,14 @@ class ApiWorkflowTests(APITestCase):
         self.assertEqual(created.status_code, 201)
         self.authenticate(self.user)
         self.assertEqual(len(self.client.get("/api/v1/foods/").data), 1)
+        self.assertEqual(
+            len(self.client.get("/api/v1/foods/?barcode=1234567890123").data),
+            1,
+        )
+        self.assertEqual(
+            self.client.get("/api/v1/foods/?barcode=0000000000000").data,
+            [],
+        )
 
     def test_food_meal_nutrients_are_calculated_from_published_catalog(self):
         self.authenticate(self.admin)
@@ -271,3 +284,268 @@ class ApiWorkflowTests(APITestCase):
         self.client.force_login(self.admin)
         response = self.client.get("/django-admin/api/user/add/")
         self.assertEqual(response.status_code, 200)
+
+    def test_profile_preferences_and_account_export_are_user_scoped(self):
+        self.client.force_authenticate(user=self.user)
+        updated = self.client.patch(
+            "/api/v1/auth/me/",
+            {
+                "name": "Updated User",
+                "preferences": {
+                    "units": "Imperial",
+                    "water_reminders": True,
+                    "nutrition_goals": {"calories": 2000},
+                },
+            },
+            format="json",
+        )
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.data["preferences"]["units"], "Imperial")
+
+        MealRecord.objects.create(
+            user=self.user,
+            name="Oatmeal",
+            category="Breakfast",
+            calories=150,
+            protein=5,
+            carbs=27,
+            fat=3,
+        )
+        export = self.client.get("/api/v1/auth/export/")
+        self.assertEqual(export.status_code, 200)
+        self.assertEqual(len(export.data["meals"]), 1)
+
+        self.client.force_authenticate(user=self.admin)
+        self.assertEqual(self.client.get("/api/v1/auth/export/").data["meals"], [])
+
+    def test_account_password_change_and_deletion_require_current_password(self):
+        self.client.force_authenticate(user=self.user)
+        denied = self.client.post(
+            "/api/v1/auth/change-password/",
+            {
+                "current_password": "wrong-password",
+                "new_password": "NewStrongPass456!",
+            },
+            format="json",
+        )
+        self.assertEqual(denied.status_code, 400)
+        changed = self.client.post(
+            "/api/v1/auth/change-password/",
+            {
+                "current_password": "StrongPass123!",
+                "new_password": "NewStrongPass456!",
+            },
+            format="json",
+        )
+        self.assertEqual(changed.status_code, 204)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("NewStrongPass456!"))
+
+        denied_delete = self.client.delete(
+            "/api/v1/auth/account/",
+            {"password": "wrong-password"},
+            format="json",
+        )
+        self.assertEqual(denied_delete.status_code, 400)
+        deleted = self.client.delete(
+            "/api/v1/auth/account/",
+            {"password": "NewStrongPass456!"},
+            format="json",
+        )
+        self.assertEqual(deleted.status_code, 204)
+        self.assertFalse(User.objects.filter(pk=self.user.pk).exists())
+        self.assertTrue(
+            AuditEvent.objects.filter(action="account.deleted").exists()
+        )
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        DEFAULT_FROM_EMAIL="noreply@example.com",
+    )
+    def test_email_verification_and_password_reset_codes_are_one_time(self):
+        self.client.force_authenticate(user=self.user)
+        requested = self.client.post("/api/v1/auth/email/verification/request/")
+        self.assertEqual(requested.status_code, 200)
+        code = re.search(r"\b\d{6}\b", mail.outbox[-1].body).group()
+        verified = self.client.post(
+            "/api/v1/auth/email/verification/confirm/",
+            {"code": code},
+            format="json",
+        )
+        self.assertEqual(verified.status_code, 200)
+        self.assertTrue(verified.data["is_email_verified"])
+        reused = self.client.post(
+            "/api/v1/auth/email/verification/confirm/",
+            {"code": code},
+            format="json",
+        )
+        self.assertEqual(reused.status_code, 400)
+
+        reset = self.client.post(
+            "/api/v1/auth/password/reset/request/",
+            {"email": self.user.email},
+            format="json",
+        )
+        self.assertEqual(reset.status_code, 200)
+        reset_code = re.search(r"\b\d{6}\b", mail.outbox[-1].body).group()
+        confirmed = self.client.post(
+            "/api/v1/auth/password/reset/confirm/",
+            {
+                "email": self.user.email,
+                "code": reset_code,
+                "new_password": "ResetStrongPass456!",
+            },
+            format="json",
+        )
+        self.assertEqual(confirmed.status_code, 204)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("ResetStrongPass456!"))
+
+    def test_admin_content_announcements_and_audit_are_connected(self):
+        self.client.force_authenticate(user=self.admin)
+        article = self.client.post(
+            "/api/v1/content/",
+            {
+                "title": "Nutrition basics",
+                "summary": "A balanced overview",
+                "category": "Nutrition",
+                "body": "Eat a variety of foods.",
+                "is_published": True,
+            },
+            format="json",
+        )
+        self.assertEqual(article.status_code, 201)
+        self.client.force_authenticate(user=self.user)
+        self.assertEqual(len(self.client.get("/api/v1/content/").data), 1)
+        self.assertEqual(
+            self.client.post(
+                "/api/v1/content/",
+                {
+                    "title": "Blocked",
+                    "summary": "No",
+                    "category": "Nutrition",
+                    "body": "No",
+                    "is_published": True,
+                },
+                format="json",
+            ).status_code,
+            403,
+        )
+
+        self.client.force_authenticate(user=self.admin)
+        announcement = self.client.post(
+            "/api/v1/announcements/",
+            {"title": "Update", "body": "New catalog items are available."},
+            format="json",
+        )
+        self.assertEqual(announcement.status_code, 201)
+        self.client.force_authenticate(user=self.user)
+        self.assertEqual(len(self.client.get("/api/v1/announcements/").data), 1)
+        self.client.force_authenticate(user=self.admin)
+        self.assertGreaterEqual(
+            len(self.client.get("/api/v1/admin/audit/").data),
+            2,
+        )
+
+    def test_admin_report_is_date_filtered_and_aggregate_only(self):
+        self.client.force_authenticate(user=self.user)
+        MealRecord.objects.create(
+            user=self.user,
+            name="Private meal",
+            category="Lunch",
+            calories=300,
+            protein=10,
+            carbs=30,
+            fat=8,
+        )
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.get("/api/v1/admin/reports/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["meal_records"], 1)
+        self.assertNotIn("meals", response.data)
+        self.assertEqual(
+            self.client.get(
+                "/api/v1/admin/reports/?start=not-a-date"
+            ).status_code,
+            400,
+        )
+
+    def test_water_entries_persist_and_keep_daily_total_in_sync(self):
+        self.client.force_authenticate(user=self.user)
+        created = self.client.post(
+            "/api/v1/water/entries/",
+            {"amount_ml": 300},
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(
+            self.client.get("/api/v1/water/today/").data["amount_ml"],
+            300,
+        )
+
+        updated = self.client.patch(
+            f"/api/v1/water/entries/{created.data['id']}/",
+            {"amount_ml": 450},
+            format="json",
+        )
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(
+            self.client.get("/api/v1/water/today/").data["amount_ml"],
+            450,
+        )
+
+        other = User.objects.create_user(
+            email="other-water@example.com",
+            name="Other",
+            password="StrongPass123!",
+        )
+        self.client.force_authenticate(user=other)
+        self.assertEqual(self.client.get("/api/v1/water/entries/").data, [])
+        self.assertEqual(
+            self.client.delete(
+                f"/api/v1/water/entries/{created.data['id']}/"
+            ).status_code,
+            404,
+        )
+
+        self.client.force_authenticate(user=self.user)
+        deleted = self.client.delete(
+            f"/api/v1/water/entries/{created.data['id']}/"
+        )
+        self.assertEqual(deleted.status_code, 204)
+        self.assertEqual(
+            self.client.get("/api/v1/water/today/").data["amount_ml"],
+            0,
+        )
+
+    def test_measurements_are_persisted_and_private_per_account(self):
+        self.client.force_authenticate(user=self.user)
+        created = self.client.post(
+            "/api/v1/measurements/",
+            {"weight_kg": "62.50", "height_cm": "168.00"},
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.data["weight_kg"], "62.50")
+
+        other = User.objects.create_user(
+            email="other-measurement@example.com",
+            name="Other",
+            password="StrongPass123!",
+        )
+        self.client.force_authenticate(user=other)
+        self.assertEqual(self.client.get("/api/v1/measurements/").data, [])
+        self.assertEqual(
+            self.client.get(
+                f"/api/v1/measurements/{created.data['id']}/"
+            ).status_code,
+            404,
+        )
+
+        self.client.force_authenticate(user=self.user)
+        invalid = self.client.post(
+            "/api/v1/measurements/",
+            {"weight_kg": "600"},
+            format="json",
+        )
+        self.assertEqual(invalid.status_code, 400)

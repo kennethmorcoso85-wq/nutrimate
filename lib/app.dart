@@ -78,6 +78,10 @@ class _NutriMateAppState extends State<NutriMateApp> {
     setState(() => _activeAccount = null);
   }
 
+  void _onAccountUpdated(LocalAccount account) {
+    if (mounted) setState(() => _activeAccount = account);
+  }
+
   Future<void> _addMeal(MealRecord meal) async {
     final saved = await _api.createMeal(meal);
     if (mounted) setState(() => _meals.insert(0, saved));
@@ -85,7 +89,9 @@ class _NutriMateAppState extends State<NutriMateApp> {
 
   Future<void> _removeMeal(MealRecord meal) async {
     await _api.deleteMeal(meal);
-    if (mounted) setState(() => _meals.removeWhere((item) => item.id == meal.id));
+    if (mounted) {
+      setState(() => _meals.removeWhere((item) => item.id == meal.id));
+    }
   }
 
   Future<void> _updateMeal(String id, MealRecord meal) async {
@@ -96,13 +102,6 @@ class _NutriMateAppState extends State<NutriMateApp> {
         if (index >= 0) _meals[index] = updated;
       });
     }
-  }
-
-  Future<void> _addWater(int amount) async {
-    final updated = await _api.setTodayWater(
-      (_waterMl + amount).clamp(0, 15000).toInt(),
-    );
-    if (mounted) setState(() => _waterMl = updated);
   }
 
   Future<void> _refreshUserData() async {
@@ -163,10 +162,7 @@ class _NutriMateAppState extends State<NutriMateApp> {
                     children: [
                       const Icon(Icons.cloud_off_outlined, size: 42),
                       const SizedBox(height: 12),
-                      Text(
-                        _startupError!,
-                        textAlign: TextAlign.center,
-                      ),
+                      Text(_startupError!, textAlign: TextAlign.center),
                       const SizedBox(height: 12),
                       FilledButton(
                         onPressed: () => setState(() {
@@ -197,9 +193,9 @@ class _NutriMateAppState extends State<NutriMateApp> {
               onAddMeal: _addMeal,
               onUpdateMeal: _updateMeal,
               onDeleteMeal: _removeMeal,
-              onAddWater: _addWater,
               onRefresh: _refreshUserData,
               onLogout: _onLogout,
+              onAccountUpdated: _onAccountUpdated,
             ),
     );
   }

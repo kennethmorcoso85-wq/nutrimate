@@ -126,12 +126,14 @@ class _AddMealSheet extends StatefulWidget {
     required this.date,
     required this.foodCatalog,
     required this.foodCategories,
+    required this.onBarcodeLookup,
     this.initialMeal,
   });
 
   final DateTime date;
   final List<_FoodData> foodCatalog;
   final List<String> foodCategories;
+  final Future<_FoodData?> Function(String) onBarcodeLookup;
   final MealRecord? initialMeal;
 
   @override
@@ -209,6 +211,9 @@ class _AddMealSheetState extends State<_AddMealSheet> {
   void _selectFood(_FoodData food) {
     setState(() {
       _selectedFood = food;
+      if (widget.foodCategories.contains(food.category)) {
+        _category = food.category;
+      }
       _servings = 1;
       _servingSize = '1 serving';
       _name.text = food.name;
@@ -217,6 +222,55 @@ class _AddMealSheetState extends State<_AddMealSheet> {
       _carbs.text = food.carbs.toString();
       _fat.text = food.fat.toString();
     });
+  }
+
+  Future<void> _lookupFoodByBarcode() async {
+    final controller = TextEditingController();
+    final barcode = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Find food by barcode'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(labelText: 'Barcode number'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (controller.text.trim().isNotEmpty) {
+                Navigator.pop(dialogContext, controller.text.trim());
+              }
+            },
+            child: const Text('Search'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (barcode == null) return;
+    try {
+      final food = await widget.onBarcodeLookup(barcode);
+      if (!mounted) return;
+      if (food == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No published food matched that barcode.'),
+          ),
+        );
+        return;
+      }
+      _selectFood(food);
+    } on ApiException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    }
   }
 
   void _updateServing() {
@@ -499,14 +553,9 @@ class _AddMealSheetState extends State<_AddMealSheet> {
                 spacing: 8,
                 children: [
                   OutlinedButton.icon(
-                    onPressed: null,
+                    onPressed: _lookupFoodByBarcode,
                     icon: const Icon(Icons.qr_code_scanner, size: 16),
-                    label: const Text('Barcode scan · soon'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: null,
-                    icon: const Icon(Icons.photo_camera_outlined, size: 16),
-                    label: const Text('Photo scan · soon'),
+                    label: const Text('Find by barcode'),
                   ),
                 ],
               ),

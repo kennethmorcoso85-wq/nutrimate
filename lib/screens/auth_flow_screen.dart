@@ -61,27 +61,30 @@ class _AuthFlowScreenState extends State<AuthFlowScreen> {
   }
 
   Future<void> _showPasswordRecovery() async {
-    await showDialog<void>(
+    final email = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Forgot password?'),
-        content: Text(
-          _email.text.trim().isEmpty
-              ? 'Enter your email in the sign-in form. Password recovery is not enabled on this server yet.'
-              : 'Password recovery for ${_email.text.trim()} needs an email delivery service, which is not configured yet.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-          FilledButton(
-            onPressed: null,
-            child: const Text('Send reset link · unavailable'),
-          ),
-        ],
-      ),
+      builder: (_) => _RecoveryEmailDialog(initialEmail: _email.text.trim()),
     );
+    if (email == null) return;
+    try {
+      await widget.api.requestPasswordReset(email);
+      if (!mounted) return;
+      final values = await showDialog<(String, String)>(
+        context: context,
+        builder: (_) => const _PasswordResetDialog(),
+      );
+      if (values == null) return;
+      await widget.api.confirmPasswordReset(
+        email: email,
+        code: values.$1,
+        newPassword: values.$2,
+      );
+      if (mounted) {
+        setState(() => _error = 'Password reset. You can now sign in.');
+      }
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    }
   }
 
   @override
@@ -597,18 +600,7 @@ class _AuthFlowScreenState extends State<AuthFlowScreen> {
                                 onPressed: _showPasswordRecovery,
                                 child: const Text('Forgot password?'),
                               ),
-                            )
-                          else ...[
-                            const SizedBox(height: 7),
-                            const OutlinedButton(
-                              onPressed: null,
-                              child: Text('Verify email · backend required'),
                             ),
-                            const TextButton(
-                              onPressed: null,
-                              child: Text('Resend verification · unavailable'),
-                            ),
-                          ],
                           const SizedBox(height: 14),
                           const _LocalStorageNotice(),
                           const SizedBox(height: 12),
@@ -973,5 +965,103 @@ class _LocalStorageNotice extends StatelessWidget {
         ),
       ],
     ),
+  );
+}
+
+class _RecoveryEmailDialog extends StatefulWidget {
+  const _RecoveryEmailDialog({required this.initialEmail});
+
+  final String initialEmail;
+
+  @override
+  State<_RecoveryEmailDialog> createState() => _RecoveryEmailDialogState();
+}
+
+class _RecoveryEmailDialogState extends State<_RecoveryEmailDialog> {
+  late final _email = TextEditingController(text: widget.initialEmail);
+
+  @override
+  void dispose() {
+    _email.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Reset your password'),
+    content: TextField(
+      controller: _email,
+      keyboardType: TextInputType.emailAddress,
+      decoration: const InputDecoration(labelText: 'Account email'),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: () {
+          if (!_email.text.contains('@')) return;
+          Navigator.pop(context, _email.text.trim());
+        },
+        child: const Text('Send code'),
+      ),
+    ],
+  );
+}
+
+class _PasswordResetDialog extends StatefulWidget {
+  const _PasswordResetDialog();
+
+  @override
+  State<_PasswordResetDialog> createState() => _PasswordResetDialogState();
+}
+
+class _PasswordResetDialogState extends State<_PasswordResetDialog> {
+  final _code = TextEditingController();
+  final _password = TextEditingController();
+
+  @override
+  void dispose() {
+    _code.dispose();
+    _password.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Enter reset code'),
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        TextField(
+          controller: _code,
+          keyboardType: TextInputType.number,
+          maxLength: 6,
+          decoration: const InputDecoration(labelText: '6-digit email code'),
+        ),
+        TextField(
+          controller: _password,
+          obscureText: true,
+          decoration: const InputDecoration(labelText: 'New password'),
+        ),
+      ],
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: () {
+          if (!RegExp(r'^\d{6}$').hasMatch(_code.text) ||
+              _password.text.length < 8) {
+            return;
+          }
+          Navigator.pop(context, (_code.text, _password.text));
+        },
+        child: const Text('Reset password'),
+      ),
+    ],
   );
 }

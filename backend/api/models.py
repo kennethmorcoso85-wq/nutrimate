@@ -40,6 +40,8 @@ class User(AbstractUser):
     email = models.EmailField(unique=True)
     name = models.CharField(max_length=120)
     role = models.CharField(max_length=10, choices=Role.choices, default=Role.USER)
+    preferences = models.JSONField(default=dict, blank=True)
+    is_email_verified = models.BooleanField(default=False)
     date_joined = models.DateTimeField(default=timezone.now)
 
     USERNAME_FIELD = "email"
@@ -75,6 +77,7 @@ class Food(models.Model):
         ARCHIVED = "archived", "Archived"
 
     name = models.CharField(max_length=160)
+    barcode = models.CharField(max_length=32, blank=True, db_index=True)
     description = models.TextField(blank=True)
     category = models.ForeignKey(
         FoodCategory, on_delete=models.PROTECT, related_name="foods"
@@ -133,3 +136,105 @@ class DailyWater(models.Model):
             models.UniqueConstraint(fields=["user", "date"], name="unique_user_water_day")
         ]
         ordering = ["-date"]
+
+
+class WaterLogEntry(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="water_entries")
+    amount_ml = models.PositiveIntegerField()
+    recorded_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-recorded_at"]
+
+
+class BodyMeasurement(models.Model):
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="body_measurements",
+    )
+    weight_kg = models.DecimalField(max_digits=5, decimal_places=2)
+    height_cm = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    measured_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-measured_at"]
+
+
+class EmailActionCode(models.Model):
+    class Purpose(models.TextChoices):
+        VERIFY_EMAIL = "verify_email", "Verify email"
+        RESET_PASSWORD = "reset_password", "Reset password"
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    purpose = models.CharField(max_length=20, choices=Purpose.choices)
+    code_hash = models.CharField(max_length=64)
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
+class EducationArticle(models.Model):
+    title = models.CharField(max_length=160)
+    summary = models.CharField(max_length=320)
+    category = models.CharField(max_length=80)
+    body = models.TextField()
+    is_published = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+
+
+class RecommendationRule(models.Model):
+    title = models.CharField(max_length=160)
+    description = models.TextField()
+    message = models.CharField(max_length=500)
+    trigger = models.CharField(max_length=40, default="manual")
+    is_active = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["title"]
+
+
+class Announcement(models.Model):
+    title = models.CharField(max_length=160)
+    body = models.TextField()
+    publish_at = models.DateTimeField(default=timezone.now)
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="announcements",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-publish_at"]
+
+
+class AuditEvent(models.Model):
+    actor = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="audit_events",
+    )
+    action = models.CharField(max_length=80)
+    target = models.CharField(max_length=160, blank=True)
+    details = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]

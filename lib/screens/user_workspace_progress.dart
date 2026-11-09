@@ -2,6 +2,7 @@ part of 'user_workspace_screen.dart';
 
 class _ProgressTab extends StatefulWidget {
   const _ProgressTab({
+    required this.api,
     required this.meals,
     required this.allMeals,
     required this.waterMl,
@@ -14,6 +15,7 @@ class _ProgressTab extends StatefulWidget {
     required this.onDeleteWater,
   });
 
+  final NutriMateApi api;
   final List<MealRecord> meals;
   final List<MealRecord> allMeals;
   final int waterMl;
@@ -32,6 +34,17 @@ class _ProgressTab extends StatefulWidget {
 class _ProgressTabState extends State<_ProgressTab> {
   String _period = 'Daily';
   DateTimeRange? _range;
+  late Future<List<Map<String, dynamic>>> _measurements;
+
+  @override
+  void initState() {
+    super.initState();
+    _reloadMeasurements();
+  }
+
+  void _reloadMeasurements() {
+    _measurements = widget.api.measurements();
+  }
 
   List<MealRecord> get _periodMeals {
     bool isInSelectedPeriod(MealRecord meal) {
@@ -152,7 +165,7 @@ class _ProgressTabState extends State<_ProgressTab> {
     if (amount != null) widget.onEditWater(entry, amount);
   }
 
-  Future<void> _exportPreview() async {
+  Future<void> _exportReport() async {
     final format = await showModalBottomSheet<String>(
       context: context,
       builder: (context) => SafeArea(
@@ -161,12 +174,12 @@ class _ProgressTabState extends State<_ProgressTab> {
           children: [
             ListTile(
               leading: const Icon(Icons.table_chart_outlined),
-              title: const Text('CSV preview'),
+              title: const Text('Copy CSV report'),
               onTap: () => Navigator.pop(context, 'CSV'),
             ),
             ListTile(
               leading: const Icon(Icons.picture_as_pdf_outlined),
-              title: const Text('PDF preview'),
+              title: const Text('Share PDF report'),
               onTap: () => Navigator.pop(context, 'PDF'),
             ),
           ],
@@ -203,58 +216,40 @@ class _ProgressTabState extends State<_ProgressTab> {
             ),
             pw.SizedBox(height: 8),
             pw.Text(
-              'Nutrition figures are estimates from locally saved entries; they are not medical advice.',
+              'Nutrition figures are estimates from your server-saved entries; they are not medical advice.',
               style: pw.TextStyle(fontSize: 9),
             ),
           ],
         ),
       );
-      await Printing.layoutPdf(
-        onLayout: (pageFormat) async => document.save(),
-        name: 'nutrimate-report.pdf',
+      await Printing.sharePdf(
+        bytes: await document.save(),
+        filename: 'nutrimate-report.pdf',
       );
       return;
     }
+    String csvCell(Object value) =>
+        '"${value.toString().replaceAll('"', '""')}"';
     final csv = [
       'date,meal,category,calories,protein_g,carbs_g,fat_g',
       ..._periodMeals.map(
-        (meal) =>
-            '${meal.createdAt.toIso8601String()},${meal.name},${meal.category},${meal.calories},${meal.protein},${meal.carbs},${meal.fat}',
+        (meal) => [
+          meal.createdAt.toIso8601String(),
+          meal.name,
+          meal.category,
+          meal.calories,
+          meal.protein,
+          meal.carbs,
+          meal.fat,
+        ].map(csvCell).join(','),
       ),
     ].join('\n');
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('$format report preview'),
-        content: SingleChildScrollView(
-          child: Text(
-            format == 'CSV'
-                ? csv
-                : 'Nutrition summary\n${widget.meals.length} meal entries\n${widget.meals.fold<int>(0, (sum, meal) => sum + meal.calories)} estimated kcal\n\nPDF generation is not connected.',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-          if (format == 'CSV')
-            FilledButton.icon(
-              onPressed: () async {
-                final messenger = ScaffoldMessenger.of(this.context);
-                await Clipboard.setData(ClipboardData(text: csv));
-                if (!context.mounted || !mounted) return;
-                Navigator.pop(context);
-                messenger.showSnackBar(
-                  const SnackBar(content: Text('CSV copied to clipboard.')),
-                );
-              },
-              icon: const Icon(Icons.copy, size: 16),
-              label: const Text('Copy CSV'),
-            ),
-        ],
-      ),
-    );
+    await Clipboard.setData(ClipboardData(text: csv));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('CSV report copied to clipboard.')),
+      );
+    }
   }
 
   @override
@@ -276,7 +271,8 @@ class _ProgressTabState extends State<_ProgressTab> {
             const Expanded(
               child: _PageHeading(
                 title: 'Progress & insights',
-                subtitle: 'Review local nutrition records and trends',
+                subtitle:
+                    'Review nutrition records and trends saved by the API',
               ),
             ),
             IconButton(
@@ -370,12 +366,12 @@ class _ProgressTabState extends State<_ProgressTab> {
               label: const Text('Add water'),
             ),
             OutlinedButton.icon(
-              onPressed: _exportPreview,
+              onPressed: _exportReport,
               icon: const Icon(Icons.file_download_outlined, size: 16),
               label: const Text('Reports & export'),
             ),
             OutlinedButton.icon(
-              onPressed: () => _showMeasurementsPreview(context),
+              onPressed: _showMeasurements,
               icon: const Icon(Icons.monitor_weight_outlined, size: 16),
               label: const Text('Measurements'),
             ),
@@ -383,14 +379,7 @@ class _ProgressTabState extends State<_ProgressTab> {
         ),
         const SizedBox(height: 14),
         Row(
-          children: [
-            const Expanded(child: _SectionHeading('Water history')),
-            TextButton.icon(
-              onPressed: _addMeasurementPreview,
-              icon: const Icon(Icons.add, size: 16),
-              label: const Text('Add measurement'),
-            ),
-          ],
+          children: [const Expanded(child: _SectionHeading('Water history'))],
         ),
         if (recentEntries.isEmpty)
           _WhiteCard(
@@ -423,70 +412,244 @@ class _ProgressTabState extends State<_ProgressTab> {
               ),
             ),
           ),
+        const SizedBox(height: 14),
+        Row(
+          children: [
+            const Expanded(child: _SectionHeading('Body measurements')),
+            TextButton.icon(
+              onPressed: _addMeasurement,
+              icon: const Icon(Icons.add, size: 16),
+              label: const Text('Add measurement'),
+            ),
+          ],
+        ),
+        FutureBuilder<List<Map<String, dynamic>>>(
+          future: _measurements,
+          builder: (context, snapshot) {
+            if (snapshot.hasError) {
+              return _WhiteCard(
+                child: Text(
+                  snapshot.error.toString(),
+                  style: const TextStyle(
+                    color: Color(0xFFB74B4B),
+                    fontSize: 11,
+                  ),
+                ),
+              );
+            }
+            if (!snapshot.hasData) {
+              return const Padding(
+                padding: EdgeInsets.all(14),
+                child: Center(child: CircularProgressIndicator()),
+              );
+            }
+            if (snapshot.data!.isEmpty) {
+              return const _WhiteCard(
+                child: Text(
+                  'No body measurements recorded.',
+                  style: TextStyle(color: Color(0xFF78869A), fontSize: 11),
+                ),
+              );
+            }
+            return Column(
+              children: snapshot.data!
+                  .take(3)
+                  .map(
+                    (record) => ListTile(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 6),
+                      leading: const Icon(
+                        Icons.monitor_weight_outlined,
+                        color: AppColors.teal,
+                      ),
+                      title: Text('${record['weight_kg']} kg'),
+                      subtitle: Text(
+                        '${record['height_cm'] ?? 'Height not recorded'} cm · ${record['measured_at']}',
+                      ),
+                      onTap: () => _addMeasurement(record),
+                    ),
+                  )
+                  .toList(),
+            );
+          },
+        ),
         const SizedBox(height: 12),
         const _DemoNotice(
-          text: 'Charts use saved local records only. Period comparisons and historical totals are estimates; exercise data and measurements are not connected.',
+          text: 'Meal logs, water entries, and body measurements are saved by the NutriMate API. Nutrition figures are estimates, not medical advice.',
         ),
       ],
     );
   }
 
-  Future<void> _showMeasurementsPreview(BuildContext context) async {
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Measurements'),
-        content: const Text(
-          'Measurement history is not saved yet. Add measurement is a local preview only.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-          FilledButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _addMeasurementPreview();
-            },
-            child: const Text('Add measurement'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _addMeasurementPreview() async {
-    final value = await showDialog<String>(
-      context: context,
-      builder: (context) {
-        final controller = TextEditingController();
-        return AlertDialog(
-          title: const Text('Add measurement · preview'),
-          content: TextField(
-            controller: controller,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: 'Weight (kg)'),
+  Future<void> _showMeasurements() async {
+    try {
+      final records = await widget.api.measurements();
+      if (!mounted) return;
+      final result = await showDialog<Map<String, dynamic>?>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Measurements'),
+          content: SizedBox(
+            width: 420,
+            child: records.isEmpty
+                ? const Text('No measurements recorded yet.')
+                : ListView(
+                    shrinkWrap: true,
+                    children: records
+                        .map(
+                          (record) => ListTile(
+                            title: Text('${record['weight_kg']} kg'),
+                            subtitle: Text(
+                              '${record['height_cm'] ?? 'Height not recorded'} cm · ${record['measured_at']}',
+                            ),
+                            onTap: () => Navigator.pop(dialogContext, record),
+                            trailing: IconButton(
+                              tooltip: 'Delete measurement',
+                              icon: const Icon(Icons.delete_outline),
+                              onPressed: () => Navigator.pop(dialogContext, {
+                                'delete_id': record['id'],
+                              }),
+                            ),
+                          ),
+                        )
+                        .toList(),
+                  ),
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, controller.text),
-              child: const Text('Save preview'),
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Close'),
             ),
           ],
-        );
-      },
-    );
-    if (value != null && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Measurement $value kg was not saved.')),
+        ),
       );
+      if (result == null) return;
+      final deleteId = result['delete_id'];
+      if (deleteId is int) {
+        await widget.api.deleteMeasurement(deleteId);
+        if (mounted) {
+          setState(_reloadMeasurements);
+          _showMessage('Measurement deleted.');
+        }
+      } else {
+        await _addMeasurement(result);
+      }
+    } on ApiException catch (error) {
+      if (mounted) _showMessage(error.message);
     }
   }
+
+  Future<void> _addMeasurement([Map<String, dynamic>? existing]) async {
+    final values = await showDialog<(double, double?)>(
+      context: context,
+      builder: (_) => _MeasurementDialog(measurement: existing),
+    );
+    if (values == null) return;
+    try {
+      if (existing == null) {
+        await widget.api.createMeasurement(
+          weightKg: values.$1,
+          heightCm: values.$2,
+        );
+        if (mounted) {
+          setState(_reloadMeasurements);
+          _showMessage('Measurement saved to your account.');
+        }
+      } else {
+        await widget.api.updateMeasurement(
+          existing['id'] as int,
+          weightKg: values.$1,
+          heightCm: values.$2,
+        );
+        if (mounted) {
+          setState(_reloadMeasurements);
+          _showMessage('Measurement updated.');
+        }
+      }
+    } on ApiException catch (error) {
+      if (mounted) _showMessage(error.message);
+    }
+  }
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+}
+
+class _MeasurementDialog extends StatefulWidget {
+  const _MeasurementDialog({this.measurement});
+
+  final Map<String, dynamic>? measurement;
+
+  @override
+  State<_MeasurementDialog> createState() => _MeasurementDialogState();
+}
+
+class _MeasurementDialogState extends State<_MeasurementDialog> {
+  late final _weight = TextEditingController(
+    text: '${widget.measurement?['weight_kg'] ?? ''}',
+  );
+  late final _height = TextEditingController(
+    text: '${widget.measurement?['height_cm'] ?? ''}',
+  );
+  String? _error;
+
+  @override
+  void dispose() {
+    _weight.dispose();
+    _height.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final weight = double.tryParse(_weight.text.trim());
+    final heightText = _height.text.trim();
+    final height = heightText.isEmpty ? null : double.tryParse(heightText);
+    if (weight == null ||
+        weight <= 0 ||
+        (heightText.isNotEmpty && (height == null || height <= 0))) {
+      setState(() => _error = 'Enter a valid weight and optional height.');
+      return;
+    }
+    Navigator.pop(context, (weight, height));
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(
+      widget.measurement == null ? 'Add measurement' : 'Edit measurement',
+    ),
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        TextField(
+          controller: _weight,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: const InputDecoration(labelText: 'Weight (kg)'),
+        ),
+        const SizedBox(height: 9),
+        TextField(
+          controller: _height,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: const InputDecoration(labelText: 'Height (cm, optional)'),
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            _error!,
+            style: const TextStyle(color: Color(0xFFB74B4B), fontSize: 11),
+          ),
+        ],
+      ],
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(onPressed: _save, child: const Text('Save')),
+    ],
+  );
 }
 
 class _TrendPoint {

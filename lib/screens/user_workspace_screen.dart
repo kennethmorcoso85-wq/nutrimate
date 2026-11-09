@@ -25,9 +25,9 @@ class UserWorkspaceScreen extends StatefulWidget {
     required this.onAddMeal,
     required this.onUpdateMeal,
     required this.onDeleteMeal,
-    required this.onAddWater,
     required this.onRefresh,
     required this.onLogout,
+    required this.onAccountUpdated,
     super.key,
   });
 
@@ -38,9 +38,9 @@ class UserWorkspaceScreen extends StatefulWidget {
   final Future<void> Function(MealRecord) onAddMeal;
   final Future<void> Function(String, MealRecord) onUpdateMeal;
   final Future<void> Function(MealRecord) onDeleteMeal;
-  final Future<void> Function(int) onAddWater;
   final Future<void> Function() onRefresh;
   final VoidCallback onLogout;
+  final ValueChanged<LocalAccount> onAccountUpdated;
 
   @override
   State<UserWorkspaceScreen> createState() => _UserWorkspaceScreenState();
@@ -48,12 +48,44 @@ class UserWorkspaceScreen extends StatefulWidget {
 
 class _UserWorkspaceScreenState extends State<UserWorkspaceScreen> {
   int _tab = 0;
-  NutritionGoals _goals = const NutritionGoals();
+  late NutritionGoals _goals;
   DateTime _selectedDate = DateUtils.dateOnly(DateTime.now());
-  bool _notificationsRead = false;
   final Set<String> _readNotifications = {};
   final Set<String> _dismissedNotifications = {};
   final List<_WaterLogEntry> _waterEntries = [];
+
+  @override
+  void initState() {
+    super.initState();
+    final storedGoals = widget.account.preferences['nutrition_goals'];
+    _goals = storedGoals is Map
+        ? NutritionGoals.fromJson(Map<String, dynamic>.from(storedGoals))
+        : const NutritionGoals();
+    _readNotifications.addAll(
+      (widget.account.preferences['read_notifications'] as List? ?? const [])
+          .whereType<String>(),
+    );
+    _dismissedNotifications.addAll(
+      (widget.account.preferences['dismissed_notifications'] as List? ??
+              const [])
+          .whereType<String>(),
+    );
+    _loadWaterEntries();
+  }
+
+  Future<void> _loadWaterEntries() async {
+    try {
+      final entries = await widget.api.waterEntries();
+      if (!mounted) return;
+      setState(() {
+        _waterEntries
+          ..clear()
+          ..addAll(entries.map(_WaterLogEntry.fromJson));
+      });
+    } on ApiException catch (error) {
+      if (mounted) _showMessage(error.message);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -85,6 +117,7 @@ class _UserWorkspaceScreenState extends State<UserWorkspaceScreen> {
         onShowDetails: _showMealDetails,
       ),
       _ProgressTab(
+        api: widget.api,
         meals: selectedMeals,
         allMeals: widget.meals,
         waterMl: widget.waterMl,
@@ -96,14 +129,18 @@ class _UserWorkspaceScreenState extends State<UserWorkspaceScreen> {
         onEditWater: _editWaterEntry,
         onDeleteWater: _confirmDeleteWater,
       ),
-      const _LearnTab(),
+      _LearnTab(
+        api: widget.api,
+        account: widget.account,
+        onAccountUpdated: widget.onAccountUpdated,
+      ),
       _ProfileTab(
         account: widget.account,
-        meals: widget.meals,
-        waterMl: widget.waterMl,
+        api: widget.api,
         goals: _goals,
         onGoalsChanged: (goals) => setState(() => _goals = goals),
         onLogout: widget.onLogout,
+        onAccountUpdated: widget.onAccountUpdated,
       ),
     ];
     return Scaffold(
@@ -252,6 +289,7 @@ class _UserWorkspaceScreenState extends State<UserWorkspaceScreen> {
           foodCategories: categories
               .map((category) => category['name'] as String)
               .toList(),
+          onBarcodeLookup: _lookupFoodByBarcode,
         ),
       );
       if (meals != null && meals.isNotEmpty) {
@@ -283,6 +321,7 @@ class _UserWorkspaceScreenState extends State<UserWorkspaceScreen> {
           foodCategories: categories
               .map((category) => category['name'] as String)
               .toList(),
+          onBarcodeLookup: _lookupFoodByBarcode,
         ),
       );
       if (updatedMeals == null || updatedMeals.isEmpty) return;
@@ -309,6 +348,11 @@ class _UserWorkspaceScreenState extends State<UserWorkspaceScreen> {
     '${food['serving_size']} ${food['serving_unit']}',
     source: food['data_source'] as String? ?? 'Not provided',
   );
+
+  Future<_FoodData?> _lookupFoodByBarcode(String barcode) async {
+    final matches = await widget.api.foods(barcode: barcode);
+    return matches.isEmpty ? null : _foodDataFromApi(matches.first);
+  }
 
   Future<void> _duplicateMeal(MealRecord meal) async {
     await _saveMeal(
@@ -444,14 +488,14 @@ class _UserWorkspaceScreenState extends State<UserWorkspaceScreen> {
 
   Future<void> _addWaterEntry(int amount) async {
     if (amount <= 0) return;
-    final entry = _WaterLogEntry(amount: amount);
-    setState(() => _waterEntries.insert(0, entry));
     try {
-      await widget.onAddWater(amount);
+      final saved = await widget.api.createWaterEntry(amount);
+      if (mounted) {
+        setState(() => _waterEntries.insert(0, _WaterLogEntry.fromJson(saved)));
+      }
+      await widget.onRefresh();
     } on ApiException catch (error) {
-      if (!mounted) return;
-      setState(() => _waterEntries.removeWhere((item) => item.id == entry.id));
-      _showMessage(error.message);
+      if (mounted) _showMessage(error.message);
     }
   }
 
@@ -459,44 +503,29 @@ class _UserWorkspaceScreenState extends State<UserWorkspaceScreen> {
     if (amount <= 0) return;
     final index = _waterEntries.indexWhere((item) => item.id == entry.id);
     if (index < 0) return;
-    setState(
-      () => _waterEntries[index] = _WaterLogEntry(
-        id: entry.id,
-        amount: amount,
-        recordedAt: entry.recordedAt,
-      ),
-    );
     try {
-      await widget.onAddWater(amount - entry.amount);
-    } on ApiException catch (error) {
-      if (!mounted) return;
-      final currentIndex = _waterEntries.indexWhere(
-        (item) => item.id == entry.id,
+      final saved = await widget.api.updateWaterEntry(
+        int.parse(entry.id),
+        amountMl: amount,
       );
-      if (currentIndex >= 0) {
-        setState(() => _waterEntries[currentIndex] = entry);
+      if (mounted) {
+        setState(() => _waterEntries[index] = _WaterLogEntry.fromJson(saved));
       }
-      _showMessage(error.message);
+      await widget.onRefresh();
+    } on ApiException catch (error) {
+      if (mounted) _showMessage(error.message);
     }
   }
 
   Future<void> _deleteWaterEntry(_WaterLogEntry entry) async {
     final index = _waterEntries.indexWhere((item) => item.id == entry.id);
     if (index < 0) return;
-    setState(() => _waterEntries.removeAt(index));
     try {
-      await widget.onAddWater(-entry.amount);
+      await widget.api.deleteWaterEntry(int.parse(entry.id));
+      if (mounted) setState(() => _waterEntries.removeAt(index));
+      await widget.onRefresh();
     } on ApiException catch (error) {
-      if (!mounted) return;
-      if (!_waterEntries.any((item) => item.id == entry.id)) {
-        setState(
-          () => _waterEntries.insert(
-            index.clamp(0, _waterEntries.length).toInt(),
-            entry,
-          ),
-        );
-      }
-      _showMessage(error.message);
+      if (mounted) _showMessage(error.message);
     }
   }
 
@@ -524,6 +553,7 @@ class _UserWorkspaceScreenState extends State<UserWorkspaceScreen> {
   Future<void> _refreshDashboard() async {
     try {
       await widget.onRefresh();
+      await _loadWaterEntries();
       _showMessage('Dashboard refreshed from the NutriMate API.');
     } on ApiException catch (error) {
       _showMessage(error.message);
@@ -531,6 +561,16 @@ class _UserWorkspaceScreenState extends State<UserWorkspaceScreen> {
   }
 
   Future<void> _showNotifications() async {
+    late final List<Map<String, dynamic>> announcements;
+    late final List<Map<String, dynamic>> recommendations;
+    try {
+      announcements = await widget.api.announcements();
+      recommendations = await widget.api.recommendations();
+    } on ApiException catch (error) {
+      _showMessage(error.message);
+      return;
+    }
+    if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -560,53 +600,77 @@ class _UserWorkspaceScreenState extends State<UserWorkspaceScreen> {
                       ),
                     ),
                     TextButton(
-                      onPressed: () =>
-                          updateSheet(() => _notificationsRead = true),
+                      onPressed: () {
+                        updateSheet(() {
+                          _readNotifications.addAll(
+                            announcements.map((item) => '${item['id']}'),
+                          );
+                          _readNotifications.addAll(
+                            recommendations.map((item) => 'rule-${item['id']}'),
+                          );
+                        });
+                        _saveNotificationState();
+                      },
                       child: const Text('Mark all as read'),
                     ),
                   ],
                 ),
                 const SizedBox(height: 7),
-                if (_notificationsRead)
+                if (announcements.isEmpty && recommendations.isEmpty)
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: 20),
                     child: Center(
                       child: Text(
-                        'You’re all caught up.',
+                        'No announcements or recommendations yet.',
                         style: TextStyle(color: Color(0xFF78869A)),
                       ),
                     ),
                   )
                 else ...[
-                  if (!_dismissedNotifications.contains('meals'))
-                    _NotificationPreviewTile(
-                      icon: Icons.restaurant_outlined,
-                      title: 'Review your food log',
-                      detail: 'A local reminder to add today’s meals.',
-                      isRead: _readNotifications.contains('meals'),
-                      onMarkRead: () =>
-                          updateSheet(() => _readNotifications.add('meals')),
-                      onDismiss: () => updateSheet(
-                        () => _dismissedNotifications.add('meals'),
-                      ),
-                    ),
-                  const SizedBox(height: 8),
-                  if (!_dismissedNotifications.contains('weekly'))
-                    _NotificationPreviewTile(
-                      icon: Icons.insights_outlined,
-                      title: 'Weekly summary',
-                      detail: 'Your recent meal records are ready to review.',
-                      isRead: _readNotifications.contains('weekly'),
-                      onMarkRead: () =>
-                          updateSheet(() => _readNotifications.add('weekly')),
-                      onDismiss: () => updateSheet(
-                        () => _dismissedNotifications.add('weekly'),
-                      ),
-                    ),
+                  ...announcements.map((announcement) {
+                    final id = '${announcement['id']}';
+                    if (_dismissedNotifications.contains(id)) {
+                      return const SizedBox.shrink();
+                    }
+                    return _NotificationPreviewTile(
+                      icon: Icons.campaign_outlined,
+                      title: announcement['title'] as String,
+                      detail: announcement['body'] as String,
+                      isRead: _readNotifications.contains(id),
+                      onMarkRead: () {
+                        updateSheet(() => _readNotifications.add(id));
+                        _saveNotificationState();
+                      },
+                      onDismiss: () {
+                        updateSheet(() => _dismissedNotifications.add(id));
+                        _saveNotificationState();
+                      },
+                    );
+                  }),
+                  ...recommendations.map((rule) {
+                    final id = 'rule-${rule['id']}';
+                    if (_dismissedNotifications.contains(id)) {
+                      return const SizedBox.shrink();
+                    }
+                    return _NotificationPreviewTile(
+                      icon: Icons.lightbulb_outline,
+                      title: rule['title'] as String,
+                      detail: rule['message'] as String,
+                      isRead: _readNotifications.contains(id),
+                      onMarkRead: () {
+                        updateSheet(() => _readNotifications.add(id));
+                        _saveNotificationState();
+                      },
+                      onDismiss: () {
+                        updateSheet(() => _dismissedNotifications.add(id));
+                        _saveNotificationState();
+                      },
+                    );
+                  }),
                 ],
                 const SizedBox(height: 9),
                 const Text(
-                  'Local preview only. Push delivery and scheduled reminders need a notification backend.',
+                  'Announcements and recommendations are loaded from the NutriMate API.',
                   style: TextStyle(color: Color(0xFF8290A2), fontSize: 10),
                 ),
                 Align(
@@ -626,6 +690,22 @@ class _UserWorkspaceScreenState extends State<UserWorkspaceScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _saveNotificationState() async {
+    try {
+      final updated = await widget.api.updateProfile(
+        name: widget.account.name,
+        preferences: {
+          ...widget.account.preferences,
+          'read_notifications': _readNotifications.toList(),
+          'dismissed_notifications': _dismissedNotifications.toList(),
+        },
+      );
+      if (mounted) widget.onAccountUpdated(updated);
+    } on ApiException catch (error) {
+      if (mounted) _showMessage(error.message);
+    }
   }
 
   Future<void> _confirmDeleteMeal(MealRecord meal) async {

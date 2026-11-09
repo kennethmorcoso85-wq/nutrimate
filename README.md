@@ -39,8 +39,12 @@ at the prompt, then use that same account for the Flutter Admin dashboard and
 Django Admin. Public signup has no role selector and always creates a regular
 User. The Admin workspace can then create User accounts,
 activate/deactivate accounts, manage food categories and food records, publish
-foods, and view aggregate dashboard statistics. Users can sign in and manage
-their own meal and daily water records through the API.
+foods and education articles, manage recommendation cards and scheduled
+announcements, review administrative audit events, and export aggregate reports.
+Users can sign in, manage server-saved profile preferences and nutrition goals,
+verify their email, change or recover a password, export their account data, and
+manage their own meals, itemized water history, daily water totals, and body
+measurements through the API.
 
 ## Current limitations
 
@@ -48,9 +52,10 @@ SQLite and the development server are for local development only. Set secure
 deployment settings and use a production database before release. JWT tokens
 are currently stored in app preferences; use platform-secure token storage for
 a production mobile deployment. Change the supplied local admin password
-before exposing the backend beyond local development. Server-persisted
-nutrition goals and history summaries, body measurements, article publishing,
-recommendation rules, delivered notifications, audit logging, administrative
-reports/exports, password recovery, and a React web client are not implemented
-yet. Food nutrition values require a verified source and are not medical
+before exposing the backend beyond local development. Email verification and
+password recovery require SMTP settings; without SMTP, development codes are
+printed in the backend console. Announcements are delivered in the in-app feed,
+not by push notifications. Food lookup supports a manually entered barcode but
+does not scan with the camera; photo recognition and a React web client are not
+included. Food nutrition values require a verified source and are not medical
 guidance.

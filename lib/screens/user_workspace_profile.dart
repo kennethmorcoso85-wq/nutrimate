@@ -10,6 +10,23 @@ class _EducationArticle {
     required this.color,
   });
 
+  factory _EducationArticle.fromJson(Map<String, dynamic> json) {
+    final category = json['category'] as String;
+    final iconAndColor = switch (category.toLowerCase()) {
+      'hydration' => (Icons.water_drop_outlined, AppColors.blue),
+      'habits' => (Icons.schedule_outlined, Color(0xFF8A68BE)),
+      _ => (Icons.menu_book_outlined, AppColors.teal),
+    };
+    return _EducationArticle(
+      title: json['title'] as String,
+      summary: json['summary'] as String,
+      category: category,
+      body: json['body'] as String,
+      icon: iconAndColor.$1,
+      color: iconAndColor.$2,
+    );
+  }
+
   final String title;
   final String summary;
   final String category;
@@ -18,35 +35,16 @@ class _EducationArticle {
   final Color color;
 }
 
-const _educationArticles = [
-  _EducationArticle(
-    title: 'Add variety to your plate',
-    summary: 'Try different colors and food groups when available.',
-    category: 'Nutrition',
-    body: 'A varied selection can make meals more interesting. Use the foods that fit your preferences, budget, and availability.',
-    icon: Icons.palette_outlined,
-    color: AppColors.teal,
-  ),
-  _EducationArticle(
-    title: 'Keep water nearby',
-    summary: 'A refillable bottle can help you remember water.',
-    category: 'Hydration',
-    body: 'Keeping water where you can see it may make it easier to log your intake. Individual needs vary, so follow guidance from a qualified professional.',
-    icon: Icons.water_drop_outlined,
-    color: AppColors.blue,
-  ),
-  _EducationArticle(
-    title: 'Build a regular meal routine',
-    summary: 'Notice and plan around your own hunger cues.',
-    category: 'Habits',
-    body: 'A routine can make meal planning easier for some people. Adjust it to your schedule, appetite, and health needs.',
-    icon: Icons.schedule_outlined,
-    color: Color(0xFF8A68BE),
-  ),
-];
-
 class _LearnTab extends StatefulWidget {
-  const _LearnTab();
+  const _LearnTab({
+    required this.api,
+    required this.account,
+    required this.onAccountUpdated,
+  });
+
+  final NutriMateApi api;
+  final LocalAccount account;
+  final ValueChanged<LocalAccount> onAccountUpdated;
 
   @override
   State<_LearnTab> createState() => _LearnTabState();
@@ -56,98 +54,171 @@ class _LearnTabState extends State<_LearnTab> {
   String _query = '';
   String _category = 'All';
   final Set<String> _bookmarks = {};
+  late Future<List<_EducationArticle>> _articles;
 
   @override
-  Widget build(BuildContext context) {
-    final filteredArticles = _educationArticles.where((article) {
-      final query = _query.trim().toLowerCase();
-      final matchesQuery =
-          article.title.toLowerCase().contains(query) ||
-          article.summary.toLowerCase().contains(query);
-      final matchesCategory = switch (_category) {
-        'Saved' => _bookmarks.contains(article.title),
-        'All' => true,
-        _ => article.category == _category,
-      };
-      return matchesQuery && matchesCategory;
-    }).toList();
-    const categories = ['All', 'Nutrition', 'Hydration', 'Habits', 'Saved'];
-
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(18, 12, 18, 26),
-      children: [
-        const _PageHeading(
-          title: 'Education & guidance',
-          subtitle: 'Small ideas for balanced everyday choices',
-        ),
-        const SizedBox(height: 13),
-        TextField(
-          onChanged: (value) => setState(() => _query = value),
-          decoration: InputDecoration(
-            hintText: 'Search articles',
-            prefixIcon: const Icon(Icons.search),
-            suffixIcon: _query.isEmpty
-                ? null
-                : IconButton(
-                    tooltip: 'Clear search',
-                    onPressed: () => setState(() => _query = ''),
-                    icon: const Icon(Icons.close),
-                  ),
-          ),
-        ),
-        const SizedBox(height: 8),
-        SizedBox(
-          height: 38,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            children: categories
-                .map(
-                  (category) => Padding(
-                    padding: const EdgeInsets.only(right: 7),
-                    child: ChoiceChip(
-                      label: Text(category),
-                      selected: _category == category,
-                      onSelected: (_) => setState(() => _category = category),
-                    ),
-                  ),
-                )
-                .toList(),
-          ),
-        ),
-        const SizedBox(height: 8),
-        const _DemoNotice(
-          text: 'Sample educational content only. References and personalized advice are not connected.',
-        ),
-        const SizedBox(height: 13),
-        if (filteredArticles.isEmpty)
-          const _EmptyCard(
-            icon: Icons.bookmark_border,
-            title: 'No articles found',
-            subtitle: 'Try another topic or search term.',
-          )
-        else
-          ...filteredArticles.map(
-            (article) => Padding(
-              padding: const EdgeInsets.only(bottom: 9),
-              child: _LearningCard(
-                icon: article.icon,
-                color: article.color,
-                title: article.title,
-                body: article.summary,
-                tag: article.category.toUpperCase(),
-                isBookmarked: _bookmarks.contains(article.title),
-                onTap: () => _readArticle(article),
-                onBookmark: () => setState(() {
-                  _bookmarks.contains(article.title)
-                      ? _bookmarks.remove(article.title)
-                      : _bookmarks.add(article.title);
-                }),
-              ),
-            ),
-          ),
-      ],
+  void initState() {
+    super.initState();
+    _articles = _loadArticles();
+    _bookmarks.addAll(
+      (widget.account.preferences['bookmarked_articles'] as List? ?? const [])
+          .whereType<String>(),
     );
   }
+
+  Future<void> _toggleBookmark(_EducationArticle article) async {
+    final bookmarks = {..._bookmarks};
+    if (!bookmarks.add(article.title)) bookmarks.remove(article.title);
+    try {
+      final updated = await widget.api.updateProfile(
+        name: widget.account.name,
+        preferences: {
+          ...widget.account.preferences,
+          'bookmarked_articles': bookmarks.toList(),
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _bookmarks
+          ..clear()
+          ..addAll(bookmarks);
+      });
+      widget.onAccountUpdated(updated);
+    } on ApiException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    }
+  }
+
+  Future<List<_EducationArticle>> _loadArticles() async =>
+      (await widget.api.articles()).map(_EducationArticle.fromJson).toList();
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<List<_EducationArticle>>(
+    future: _articles,
+    builder: (context, snapshot) {
+      if (snapshot.hasError) {
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(snapshot.error.toString(), textAlign: TextAlign.center),
+                const SizedBox(height: 12),
+                FilledButton(
+                  onPressed: () => setState(() => _articles = _loadArticles()),
+                  child: const Text('Retry'),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+      if (!snapshot.hasData) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      final allArticles = snapshot.data!;
+      final categories = {
+        'All',
+        ...allArticles.map((article) => article.category),
+        'Saved',
+      }.toList();
+      final filteredArticles = allArticles.where((article) {
+        final query = _query.trim().toLowerCase();
+        final matchesQuery =
+            article.title.toLowerCase().contains(query) ||
+            article.summary.toLowerCase().contains(query);
+        final matchesCategory = switch (_category) {
+          'Saved' => _bookmarks.contains(article.title),
+          'All' => true,
+          _ => article.category == _category,
+        };
+        return matchesQuery && matchesCategory;
+      }).toList();
+
+      return ListView(
+        padding: const EdgeInsets.fromLTRB(18, 12, 18, 26),
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: _PageHeading(
+                  title: 'Education & guidance',
+                  subtitle: 'Articles published by NutriMate administrators',
+                ),
+              ),
+              IconButton(
+                tooltip: 'Refresh articles',
+                onPressed: () => setState(() => _articles = _loadArticles()),
+                icon: const Icon(Icons.refresh),
+              ),
+            ],
+          ),
+          const SizedBox(height: 13),
+          TextField(
+            onChanged: (value) => setState(() => _query = value),
+            decoration: InputDecoration(
+              hintText: 'Search articles',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: _query.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Clear search',
+                      onPressed: () => setState(() => _query = ''),
+                      icon: const Icon(Icons.close),
+                    ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 38,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: categories
+                  .map(
+                    (category) => Padding(
+                      padding: const EdgeInsets.only(right: 7),
+                      child: ChoiceChip(
+                        label: Text(category),
+                        selected: _category == category,
+                        onSelected: (_) => setState(() => _category = category),
+                      ),
+                    ),
+                  )
+                  .toList(),
+            ),
+          ),
+          const SizedBox(height: 8),
+          const SizedBox(height: 13),
+          if (filteredArticles.isEmpty)
+            const _EmptyCard(
+              icon: Icons.bookmark_border,
+              title: 'No published articles found',
+              subtitle: 'Try another search or check back later.',
+            )
+          else
+            ...filteredArticles.map(
+              (article) => Padding(
+                padding: const EdgeInsets.only(bottom: 9),
+                child: _LearningCard(
+                  icon: article.icon,
+                  color: article.color,
+                  title: article.title,
+                  body: article.summary,
+                  tag: article.category.toUpperCase(),
+                  isBookmarked: _bookmarks.contains(article.title),
+                  onTap: () => _readArticle(article),
+                  onBookmark: () => _toggleBookmark(article),
+                ),
+              ),
+            ),
+        ],
+      );
+    },
+  );
 
   Future<void> _readArticle(_EducationArticle article) async {
     await showDialog<void>(
@@ -162,26 +233,10 @@ class _LearnTabState extends State<_LearnTab> {
               Text(article.body),
               const SizedBox(height: 14),
               Text('Related topic: ${article.category}'),
-              const SizedBox(height: 8),
-              const Text(
-                'Sources are not provided for this sample article.',
-                style: TextStyle(color: Color(0xFF78869A), fontSize: 10),
-              ),
             ],
           ),
         ),
         actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              ScaffoldMessenger.of(this.context).showSnackBar(
-                const SnackBar(
-                  content: Text('Sample articles do not include source links.'),
-                ),
-              );
-            },
-            child: const Text('View sources'),
-          ),
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Close'),
@@ -195,32 +250,107 @@ class _LearnTabState extends State<_LearnTab> {
 class _ProfileTab extends StatefulWidget {
   const _ProfileTab({
     required this.account,
-    required this.meals,
-    required this.waterMl,
+    required this.api,
     required this.goals,
     required this.onGoalsChanged,
     required this.onLogout,
+    required this.onAccountUpdated,
   });
 
   final LocalAccount account;
-  final List<MealRecord> meals;
-  final int waterMl;
+  final NutriMateApi api;
   final NutritionGoals goals;
   final ValueChanged<NutritionGoals> onGoalsChanged;
   final VoidCallback onLogout;
+  final ValueChanged<LocalAccount> onAccountUpdated;
 
   @override
   State<_ProfileTab> createState() => _ProfileTabState();
 }
 
 class _ProfileTabState extends State<_ProfileTab> {
-  late String _displayName = widget.account.name;
-  String _dietaryPreferences = 'No preferences selected';
-  String _restrictions = 'None added';
-  String _units = 'Metric';
-  bool _mealReminders = false;
-  bool _waterReminders = false;
-  bool _shareUsage = false;
+  late String _displayName;
+  late String _dietaryPreferences;
+  late String _restrictions;
+  late String _units;
+  late bool _mealReminders;
+  late bool _waterReminders;
+  late bool _shareUsage;
+
+  @override
+  void initState() {
+    super.initState();
+    final preferences = widget.account.preferences;
+    _displayName = widget.account.name;
+    final dietary = preferences['dietary_preferences'];
+    _dietaryPreferences =
+        dietary is List && dietary.whereType<String>().isNotEmpty
+        ? dietary.whereType<String>().join(', ')
+        : 'No preferences selected';
+    _restrictions = preferences['food_restrictions'] as String? ?? 'None added';
+    _units = preferences['units'] as String? ?? 'Metric';
+    _mealReminders = preferences['meal_reminders'] as bool? ?? false;
+    _waterReminders = preferences['water_reminders'] as bool? ?? false;
+    _shareUsage = preferences['share_usage'] as bool? ?? false;
+  }
+
+  Future<void> _savePreferences({
+    String? name,
+    List<String>? dietaryPreferences,
+    String? restrictions,
+    String? units,
+    bool? mealReminders,
+    bool? waterReminders,
+    bool? shareUsage,
+    NutritionGoals? goals,
+  }) async {
+    final preferences = <String, dynamic>{
+      ...widget.account.preferences,
+      'dietary_preferences':
+          dietaryPreferences ??
+          (_dietaryPreferences == 'No preferences selected'
+              ? <String>[]
+              : _dietaryPreferences.split(', ')),
+      'food_restrictions': restrictions ?? _restrictions,
+      'units': units ?? _units,
+      'meal_reminders': mealReminders ?? _mealReminders,
+      'water_reminders': waterReminders ?? _waterReminders,
+      'share_usage': shareUsage ?? _shareUsage,
+      'nutrition_goals': (goals ?? widget.goals).toJson(),
+    };
+    try {
+      final updated = await widget.api.updateProfile(
+        name: name ?? _displayName,
+        preferences: preferences,
+      );
+      if (!mounted) return;
+      setState(() {
+        _displayName = updated.name;
+        final savedDietary = updated.preferences['dietary_preferences'];
+        _dietaryPreferences =
+            savedDietary is List && savedDietary.whereType<String>().isNotEmpty
+            ? savedDietary.whereType<String>().join(', ')
+            : 'No preferences selected';
+        _restrictions =
+            updated.preferences['food_restrictions'] as String? ?? 'None added';
+        _units = updated.preferences['units'] as String? ?? 'Metric';
+        _mealReminders =
+            updated.preferences['meal_reminders'] as bool? ?? false;
+        _waterReminders =
+            updated.preferences['water_reminders'] as bool? ?? false;
+        _shareUsage = updated.preferences['share_usage'] as bool? ?? false;
+      });
+      widget.onAccountUpdated(updated);
+      if (goals != null) widget.onGoalsChanged(goals);
+      _message('Profile settings saved to your account.');
+    } on ApiException catch (error) {
+      _message(error.message);
+    }
+  }
+
+  void _message(String value) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(value)));
+  }
 
   Future<void> _editName() async {
     final controller = TextEditingController(text: _displayName);
@@ -249,7 +379,7 @@ class _ProfileTabState extends State<_ProfileTab> {
       ),
     );
     controller.dispose();
-    if (value != null) setState(() => _displayName = value);
+    if (value != null) await _savePreferences(name: value);
   }
 
   Future<void> _editGoals() async {
@@ -257,7 +387,7 @@ class _ProfileTabState extends State<_ProfileTab> {
       context: context,
       builder: (_) => _NutritionGoalsDialog(goals: widget.goals),
     );
-    if (updated != null) widget.onGoalsChanged(updated);
+    if (updated != null) await _savePreferences(goals: updated);
   }
 
   Future<void> _editDietaryPreferences() async {
@@ -301,11 +431,7 @@ class _ProfileTabState extends State<_ProfileTab> {
       ),
     );
     if (result != null) {
-      setState(
-        () => _dietaryPreferences = result.isEmpty
-            ? 'No preferences selected'
-            : result.join(', '),
-      );
+      await _savePreferences(dietaryPreferences: result.toList());
     }
   }
 
@@ -339,7 +465,9 @@ class _ProfileTabState extends State<_ProfileTab> {
     );
     controller.dispose();
     if (value != null) {
-      setState(() => _restrictions = value.isEmpty ? 'None added' : value);
+      await _savePreferences(
+        restrictions: value.isEmpty ? 'None added' : value,
+      );
     }
   }
 
@@ -364,60 +492,128 @@ class _ProfileTabState extends State<_ProfileTab> {
         ],
       ),
     );
-    if (value != null) setState(() => _units = value);
+    if (value != null) await _savePreferences(units: value);
   }
 
-  Future<void> _previewDataDownload() async {
-    final csv = [
-      'name,category,calories,protein_g,carbs_g,fat_g',
-      ...widget.meals.map(
-        (meal) =>
-            '${meal.name},${meal.category},${meal.calories},${meal.protein},${meal.carbs},${meal.fat}',
-      ),
-    ].join('\n');
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('My data preview'),
-        content: SingleChildScrollView(
-          child: Text('$csv\n\nWater total,${widget.waterMl} ml'),
+  Future<void> _exportData() async {
+    try {
+      final export = await widget.api.exportMyData();
+      final account = export['account'] as Map<String, dynamic>;
+      final meals = export['meals'] as List<dynamic>;
+      final water = export['water'] as List<dynamic>;
+      final waterEntries = export['water_entries'] as List<dynamic>;
+      final measurements = export['measurements'] as List<dynamic>;
+      final document = pw.Document();
+      document.addPage(
+        pw.MultiPage(
+          build: (_) => [
+            pw.Text(
+              'NutriMate account export',
+              style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
+            ),
+            pw.SizedBox(height: 12),
+            pw.Text('Name: ${account['name']}'),
+            pw.Text('Email: ${account['email']}'),
+            pw.SizedBox(height: 14),
+            pw.Text(
+              'Meal records (${meals.length})',
+              style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+            ),
+            ...meals.map((entry) {
+              final meal = entry as Map<String, dynamic>;
+              return pw.Text(
+                '${meal['created_at']} · ${meal['name']} · ${meal['calories']} kcal · ${meal['category']}',
+              );
+            }),
+            pw.SizedBox(height: 14),
+            pw.Text(
+              'Daily water records (${water.length})',
+              style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+            ),
+            ...water.map((entry) {
+              final day = entry as Map<String, dynamic>;
+              return pw.Text('${day['date']} · ${day['amount_ml']} ml');
+            }),
+            pw.SizedBox(height: 14),
+            pw.Text(
+              'Water entries (${waterEntries.length})',
+              style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+            ),
+            ...waterEntries.map((entry) {
+              final item = entry as Map<String, dynamic>;
+              return pw.Text(
+                '${item['recorded_at']} · ${item['amount_ml']} ml',
+              );
+            }),
+            pw.SizedBox(height: 14),
+            pw.Text(
+              'Body measurements (${measurements.length})',
+              style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+            ),
+            ...measurements.map((entry) {
+              final item = entry as Map<String, dynamic>;
+              return pw.Text(
+                '${item['measured_at']} · ${item['weight_kg']} kg · ${item['height_cm'] ?? 'Height not recorded'} cm',
+              );
+            }),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
+      );
+      await Printing.sharePdf(
+        bytes: await document.save(),
+        filename: 'nutrimate-account-data.pdf',
+      );
+    } on ApiException catch (error) {
+      if (mounted) _message(error.message);
+    }
+  }
+
+  Future<void> _changePassword() async {
+    final values = await showDialog<(String, String)>(
+      context: context,
+      builder: (_) => const _ChangePasswordDialog(),
     );
+    if (values == null) return;
+    try {
+      await widget.api.changePassword(
+        currentPassword: values.$1,
+        newPassword: values.$2,
+      );
+      if (mounted) _message('Password changed successfully.');
+    } on ApiException catch (error) {
+      if (mounted) _message(error.message);
+    }
+  }
+
+  Future<void> _verifyEmail() async {
+    try {
+      await widget.api.requestEmailVerification();
+      if (!mounted || widget.account.emailVerified) return;
+      final code = await showDialog<String>(
+        context: context,
+        builder: (_) => const _EmailCodeDialog(),
+      );
+      if (code == null) return;
+      final updated = await widget.api.confirmEmailVerification(code);
+      if (!mounted) return;
+      widget.onAccountUpdated(updated);
+      _message('Email address verified.');
+    } on ApiException catch (error) {
+      if (mounted) _message(error.message);
+    }
   }
 
   Future<void> _confirmDeleteAccount() async {
-    final confirmed = await showDialog<bool>(
+    final password = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete account?'),
-        content: const Text(
-          'Account deletion is not connected in this frontend preview. No local data will be deleted.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Understood'),
-          ),
-        ],
-      ),
+      builder: (_) => const _ConfirmAccountDeletionDialog(),
     );
-    if (confirmed == true && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Deletion is unavailable without backend support.'),
-        ),
-      );
+    if (password == null) return;
+    try {
+      await widget.api.deleteAccount(password);
+      widget.onLogout();
+    } on ApiException catch (error) {
+      if (mounted) _message(error.message);
     }
   }
 
@@ -528,7 +724,7 @@ class _ProfileTabState extends State<_ProfileTab> {
               ),
               const SizedBox(height: 5),
               const Text(
-                'Session-only tracking target; not medical advice.',
+                'Saved to your account; nutrition targets are not medical advice.',
                 style: TextStyle(color: Color(0xFF8290A2), fontSize: 9),
               ),
             ],
@@ -571,40 +767,42 @@ class _ProfileTabState extends State<_ProfileTab> {
             children: [
               _ProfileToggle(
                 title: 'Meal reminders',
-                subtitle: 'Local preference preview',
+                subtitle: 'Reminder preference saved to your account',
                 value: _mealReminders,
-                onChanged: (value) => setState(() => _mealReminders = value),
+                onChanged: (value) => _savePreferences(mealReminders: value),
               ),
               _ProfileToggle(
                 title: 'Water reminders',
-                subtitle: 'Scheduled delivery needs backend support',
+                subtitle: 'Reminder preference saved to your account',
                 value: _waterReminders,
-                onChanged: (value) => setState(() => _waterReminders = value),
+                onChanged: (value) => _savePreferences(waterReminders: value),
               ),
               _ProfileToggle(
                 title: 'Share usage data',
-                subtitle: 'Privacy preview only',
+                subtitle: 'Privacy preference saved to your account',
                 value: _shareUsage,
-                onChanged: (value) => setState(() => _shareUsage = value),
+                onChanged: (value) => _savePreferences(shareUsage: value),
               ),
             ],
           ),
         ),
         const SizedBox(height: 10),
         OutlinedButton.icon(
-          onPressed: _previewDataDownload,
+          onPressed: _exportData,
           icon: const Icon(Icons.download_outlined),
-          label: const Text('Download my data · preview'),
+          label: const Text('View my data export'),
         ),
         OutlinedButton.icon(
-          onPressed: null,
+          onPressed: _changePassword,
           icon: const Icon(Icons.lock_reset_outlined),
-          label: const Text('Change password · backend required'),
+          label: const Text('Change password'),
         ),
         OutlinedButton.icon(
-          onPressed: null,
+          onPressed: widget.account.emailVerified ? null : _verifyEmail,
           icon: const Icon(Icons.verified_outlined),
-          label: const Text('Verify email · backend required'),
+          label: Text(
+            widget.account.emailVerified ? 'Email verified' : 'Verify email',
+          ),
         ),
         OutlinedButton.icon(
           onPressed: _confirmDeleteAccount,
@@ -616,7 +814,7 @@ class _ProfileTabState extends State<_ProfileTab> {
         ),
         const SizedBox(height: 8),
         const _DemoNotice(
-          text: 'Profile edits and preferences are session-only in this preview. Password, email verification, scheduled notifications, and permanent account deletion need backend support.',
+          text: 'Profile settings are saved to your account. Email verification and password recovery require the backend email service; reminders are stored as preferences and do not send push notifications.',
         ),
       ],
     );
@@ -815,6 +1013,156 @@ class _ProfileToggle extends StatelessWidget {
         ),
       ),
       Switch.adaptive(value: value, onChanged: onChanged),
+    ],
+  );
+}
+
+class _ChangePasswordDialog extends StatefulWidget {
+  const _ChangePasswordDialog();
+
+  @override
+  State<_ChangePasswordDialog> createState() => _ChangePasswordDialogState();
+}
+
+class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
+  final _current = TextEditingController();
+  final _new = TextEditingController();
+
+  @override
+  void dispose() {
+    _current.dispose();
+    _new.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Change password'),
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        TextField(
+          controller: _current,
+          obscureText: true,
+          decoration: const InputDecoration(labelText: 'Current password'),
+        ),
+        const SizedBox(height: 10),
+        TextField(
+          controller: _new,
+          obscureText: true,
+          decoration: const InputDecoration(labelText: 'New password'),
+        ),
+      ],
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: () {
+          if (_current.text.isEmpty || _new.text.length < 8) return;
+          Navigator.pop(context, (_current.text, _new.text));
+        },
+        child: const Text('Update password'),
+      ),
+    ],
+  );
+}
+
+class _EmailCodeDialog extends StatefulWidget {
+  const _EmailCodeDialog();
+
+  @override
+  State<_EmailCodeDialog> createState() => _EmailCodeDialogState();
+}
+
+class _EmailCodeDialogState extends State<_EmailCodeDialog> {
+  final _code = TextEditingController();
+
+  @override
+  void dispose() {
+    _code.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Verify email'),
+    content: TextField(
+      controller: _code,
+      keyboardType: TextInputType.number,
+      maxLength: 6,
+      decoration: const InputDecoration(
+        labelText: '6-digit code',
+        helperText: 'Check the email account used to sign up.',
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: () {
+          if (!RegExp(r'^\d{6}$').hasMatch(_code.text)) return;
+          Navigator.pop(context, _code.text);
+        },
+        child: const Text('Verify'),
+      ),
+    ],
+  );
+}
+
+class _ConfirmAccountDeletionDialog extends StatefulWidget {
+  const _ConfirmAccountDeletionDialog();
+
+  @override
+  State<_ConfirmAccountDeletionDialog> createState() =>
+      _ConfirmAccountDeletionDialogState();
+}
+
+class _ConfirmAccountDeletionDialogState
+    extends State<_ConfirmAccountDeletionDialog> {
+  final _password = TextEditingController();
+
+  @override
+  void dispose() {
+    _password.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Delete account permanently?'),
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'This permanently deletes your account, meal records, and water history.',
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _password,
+          obscureText: true,
+          decoration: const InputDecoration(labelText: 'Current password'),
+        ),
+      ],
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        style: FilledButton.styleFrom(backgroundColor: const Color(0xFFB74B4B)),
+        onPressed: () {
+          if (_password.text.isEmpty) return;
+          Navigator.pop(context, _password.text);
+        },
+        child: const Text('Delete permanently'),
+      ),
     ],
   );
 }

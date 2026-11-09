@@ -6,6 +6,8 @@ class LocalAccount {
     this.dateJoined,
     this.role = 'user',
     this.active = true,
+    this.emailVerified = false,
+    this.preferences = const {},
   });
 
   final int? id;
@@ -14,6 +16,8 @@ class LocalAccount {
   final DateTime? dateJoined;
   final String role;
   bool active;
+  final bool emailVerified;
+  final Map<String, dynamic> preferences;
 
   Map<String, dynamic> toJson() => {
     if (id != null) 'id': id,
@@ -21,6 +25,8 @@ class LocalAccount {
     'email': email,
     'role': role,
     'is_active': active,
+    'is_email_verified': emailVerified,
+    'preferences': preferences,
     if (dateJoined != null) 'date_joined': dateJoined!.toIso8601String(),
   };
 
@@ -33,6 +39,10 @@ class LocalAccount {
         ? null
         : DateTime.parse(json['date_joined'] as String),
     active: json['is_active'] as bool? ?? json['active'] as bool? ?? true,
+    emailVerified: json['is_email_verified'] as bool? ?? false,
+    preferences: Map<String, dynamic>.from(
+      json['preferences'] as Map? ?? const {},
+    ),
   );
 
   bool get isAdmin => role.toLowerCase() == 'admin';
